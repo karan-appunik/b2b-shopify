@@ -2,9 +2,15 @@ import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { syncProductsToBackend } from "../services/productSync.server";
+import { syncCustomersToBackend } from "../services/customerSync.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
+
+  // Automatically sync store products and customers to the local MongoDB database
+  await syncProductsToBackend(admin);
+  await syncCustomersToBackend(admin);
 
   const merchantPanelUrl = process.env.MERCHANT_PANEL_URL || "";
 

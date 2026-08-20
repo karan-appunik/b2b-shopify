@@ -1,0 +1,34 @@
+<div id="sparklayer-cart-drawer-root"
+     data-sparklayer-cart-drawer
+     data-proxy-url="/apps/sparklayer/variant-search"
+     data-money-format="{{ shop.money_format }}"
+     data-i18n-title="{{ 'cartDrawer.title' | t }}"
+     data-i18n-my-account="{{ 'cartDrawer.myAccount' | t }}"
+     data-i18n-minimise="{{ 'cartDrawer.minimise' | t }}"
+     data-i18n-actions="{{ 'cartDrawer.actions' | t }}"
+     data-i18n-clear-cart="{{ 'cartDrawer.clearCart' | t }}"
+     data-i18n-search-placeholder="{{ 'cartDrawer.searchPlaceholder' | t }}"
+     data-i18n-empty="{{ 'cartDrawer.empty' | t }}"
+     data-i18n-subtotal="{{ 'cartDrawer.subtotal' | t }}"
+     data-i18n-line="{{ 'cartDrawer.line' | t }}"
+     data-i18n-lines="{{ 'cartDrawer.lines' | t }}"
+     data-i18n-item="{{ 'cartDrawer.item' | t }}"
+     data-i18n-items="{{ 'cartDrawer.items' | t }}"
+     data-i18n-checkout="{{ 'cartDrawer.checkout' | t }}"
+     data-i18n-per-unit="{{ 'cartDrawer.perUnit' | t }}"
+     data-i18n-msrp="{{ 'cartDrawer.msrp' | t }}"
+     data-i18n-close="{{ 'cartDrawer.close' | t }}"
+     data-i18n-remove="{{ 'cartDrawer.remove' | t }}"
+     {{ block.shopify_attributes }}>
+</div>
+
+<link rel="stylesheet" href="{{ 'cart-drawer.css' | asset_url }}">
+<script src="{{ 'cart-drawer.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "SparkLayer Cart Drawer",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}

@@ -7,7 +7,7 @@ name = "WholesaleFlow"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_companies,read_customers,read_orders,write_app_proxy,write_companies,write_customers,write_draft_orders,write_merchant_managed_fulfillment_orders,write_metaobject_definitions,write_metaobjects,write_products"
+scopes = "read_companies,read_customers,read_orders,read_themes,write_app_proxy,write_companies,write_customers,write_discounts,write_draft_orders,write_merchant_managed_fulfillment_orders,write_metaobject_definitions,write_metaobjects,write_products,write_themes"
 
 [webhooks]
 api_version = "2026-10"
@@ -20,8 +20,37 @@ api_version = "2026-10"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/create"
+  topics = [ "products/create" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/update"
+  topics = [ "products/update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products/delete"
+  topics = [ "products/delete" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/create"
+  topics = [ "customers/create" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/update"
+  topics = [ "customers/update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/delete"
+  topics = [ "customers/delete" ]
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
+
+[app_proxy]
+url = "https://example.com"
+prefix = "apps"
+subpath = "sparklayer"
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"
