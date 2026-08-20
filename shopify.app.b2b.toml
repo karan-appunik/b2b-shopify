@@ -10,11 +10,15 @@ api_version = "2026-10"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_companies,read_customers,read_orders,read_themes,write_app_proxy,write_companies,write_customers,write_discounts,write_draft_orders,write_merchant_managed_fulfillment_orders,write_metaobject_definitions,write_metaobjects,write_products,write_themes"
+scopes = "read_companies,read_customers,read_orders,read_payment_terms,read_themes,write_app_proxy,write_companies,write_customers,write_discounts,write_draft_orders,write_merchant_managed_fulfillment_orders,write_metaobject_definitions,write_metaobjects,write_payment_terms,write_products,write_themes"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 
+[app_proxy]
+url = "https://example.com/apps/sparklayer"
+prefix = "apps"
+subpath = "sparklayer"
+
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true
