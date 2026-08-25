@@ -188,7 +188,7 @@ function getBackendConfig(): { backendUrl: string; internalKey: string } | null 
   return { backendUrl, internalKey };
 }
 
-async function syncCustomerRows(rows: CustomerRow[]): Promise<void> {
+async function syncCustomerRows(rows: CustomerRow[], shop: string): Promise<void> {
   if (rows.length === 0) return;
 
   const config = getBackendConfig();
@@ -201,7 +201,7 @@ async function syncCustomerRows(rows: CustomerRow[]): Promise<void> {
         "Content-Type": "application/json",
         "x-internal-api-key": config.internalKey,
       },
-      body: JSON.stringify({ customers: batch }),
+      body: JSON.stringify({ shop, customers: batch }),
     });
 
     if (!res.ok) {
@@ -210,7 +210,10 @@ async function syncCustomerRows(rows: CustomerRow[]): Promise<void> {
   }
 }
 
-async function cleanupRemovedCustomersOnBackend(activeCustomerIds: string[]): Promise<void> {
+async function cleanupRemovedCustomersOnBackend(
+  activeCustomerIds: string[],
+  shop: string,
+): Promise<void> {
   const config = getBackendConfig();
   if (!config) return;
 
@@ -220,7 +223,7 @@ async function cleanupRemovedCustomersOnBackend(activeCustomerIds: string[]): Pr
       "Content-Type": "application/json",
       "x-internal-api-key": config.internalKey,
     },
-    body: JSON.stringify({ activeCustomerIds }),
+    body: JSON.stringify({ activeCustomerIds, shop }),
   });
 
   if (!res.ok) {
@@ -228,16 +231,16 @@ async function cleanupRemovedCustomersOnBackend(activeCustomerIds: string[]): Pr
   }
 }
 
-export async function syncCustomersToBackend(admin: AdminApiContext): Promise<void> {
+export async function syncCustomersToBackend(admin: AdminApiContext, shop: string): Promise<void> {
   if (!getBackendConfig()) return;
 
   try {
     const rows = await fetchAllCustomerRows(admin);
 
-    await syncCustomerRows(rows);
+    await syncCustomerRows(rows, shop);
 
     const activeCustomerIds = rows.map((r) => r.shopifyCustomerId);
-    await cleanupRemovedCustomersOnBackend(activeCustomerIds);
+    await cleanupRemovedCustomersOnBackend(activeCustomerIds, shop);
 
     console.log(
       `[customerSync] synced ${rows.length} customer(s) and cleaned up removed customers on backend-api`,
@@ -287,7 +290,7 @@ export async function syncCustomerFromWebhookPayload(
   ];
 
   try {
-    await syncCustomerRows(rows);
+    await syncCustomerRows(rows, shop);
     console.log(`[customerSync] synced customer ${payload.id}`);
   } catch (err) {
     console.error("[customerSync] failed to sync customer from webhook", err);
@@ -296,6 +299,7 @@ export async function syncCustomerFromWebhookPayload(
 
 export async function deleteCustomerByShopifyCustomerId(
   shopifyCustomerId: number | string,
+  shop: string,
 ): Promise<void> {
   const config = getBackendConfig();
   if (!config) return;
@@ -309,7 +313,7 @@ export async function deleteCustomerByShopifyCustomerId(
           "Content-Type": "application/json",
           "x-internal-api-key": config.internalKey,
         },
-        body: JSON.stringify({ shopifyCustomerId: String(shopifyCustomerId) }),
+        body: JSON.stringify({ shopifyCustomerId: String(shopifyCustomerId), shop }),
       },
     );
 

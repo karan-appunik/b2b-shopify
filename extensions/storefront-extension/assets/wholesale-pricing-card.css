@@ -1,0 +1,69 @@
+.sparklayer-wholesale-pricing {
+  position: relative;
+  z-index: 2;
+}
+
+.sl-wsp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sl-wsp-card-price {
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+
+.sl-wsp-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sl-wsp-option-label {
+  font-size: 0.8em;
+  color: var(--sl-wsp-muted, #6b6b6b);
+}
+
+.sl-wsp-option-select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--sl-wsp-border, #e5e5e5);
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.sl-wsp-card-buy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.sl-wsp-card .sl-wsp-stepper {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sl-wsp-card .sl-wsp-stepper-btn {
+  flex: 0 0 auto;
+  padding: 0 4px;
+}
+
+.sl-wsp-card .sl-wsp-qty-input {
+  flex: 1 1 auto;
+  width: auto;
+}
+

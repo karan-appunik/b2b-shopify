@@ -1,0 +1,180 @@
+{% comment %}
+  Wholesale pricing widget (multi-merchant, portable app block).
+
+  Shows WSP (sparklayer.wholesale_price variant metafield) + MSRP (native
+  variant.price) for B2B customers as a per-variant table (one row per
+  variant, even for single-variant products) with a qty stepper per row and
+  one running-total "Add to Cart" button. Guests and non-B2B logged-in
+  customers see a sign-in prompt.
+
+  Known limitation: sparklayer.wholesale_price is a plain decimal metafield
+  and does not auto-convert under Shopify Markets multi-currency storefronts
+  the way native variant.price does — WSP/MSRP could show in mismatched
+  currencies for a non-home-market shopper. Revisit if a merchant needs this.
+{% endcomment %}
+
+{% unless block.settings.product == blank %}
+  {% assign sl_product = block.settings.product %}
+  <div
+    id="sparklayer-wholesale-pricing-{{ section.id }}-{{ block.id }}"
+    class="sparklayer-wholesale-pricing"
+    data-money-format="{{ shop.money_format | strip_html }}"
+    data-currency="{{ cart.currency.iso_code }}"
+    data-i18n-add-to-cart="{{ 'wholesalePricing.addToCart' | t }}"
+    {{ block.shopify_attributes }}
+  >
+    <img class="sl-wsp-preview-float" data-sl-preview alt="" aria-hidden="true" width="120" height="120">
+    {% if customer.b2b? %}
+      {% comment %}
+        Always render the table layout, even for single-variant products
+        (one row) — matches the reference design where a 1-variant product
+        still shows the Metal/Color/Price/Qty table, not a bare price line.
+      {% endcomment %}
+      {% liquid
+        assign summary_variant = sl_product.selected_or_first_available_variant
+        assign summary_wsp = summary_variant.metafields.sparklayer.wholesale_price.value
+      %}
+      <div class="sl-wsp-summary">
+        {% if summary_wsp %}
+          <span class="sl-wsp-price-wsp">{{ 'wholesalePricing.wspPrefix' | t }}{{ summary_wsp | times: 100 | money }}</span>
+          <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ summary_variant.price | money }}</span>
+        {% else %}
+          <span class="sl-wsp-price-wsp">{{ summary_variant.price | money }}</span>
+          {% if summary_variant.compare_at_price > summary_variant.price %}
+            <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ summary_variant.compare_at_price | money }}</span>
+          {% endif %}
+        {% endif %}
+      </div>
+
+        <div class="sl-wsp-scroll">
+          <table class="sl-wsp-table">
+            <thead>
+              <tr>
+                {% for option in sl_product.options %}
+                  <th>{{ option }}</th>
+                {% endfor %}
+                <th>{{ 'wholesalePricing.price' | t }}</th>
+                <th>{{ 'wholesalePricing.quantity' | t }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for variant in sl_product.variants %}
+                {% liquid
+                  assign wsp = variant.metafields.sparklayer.wholesale_price.value
+                  if wsp
+                    assign row_price_cents = wsp | times: 100 | round
+                  else
+                    assign row_price_cents = variant.price
+                  endif
+                  assign row_image = variant.featured_image | default: sl_product.featured_image
+                %}
+                <tr
+                  class="sl-wsp-row{% if variant.available == false %} sl-wsp-row--sold-out{% endif %}"
+                  {% if row_image %}
+                    data-sl-preview-src="{{ row_image | image_url: width: 320 }}"
+                    tabindex="0"
+                  {% endif %}
+                >
+                  {% for option_value in variant.options %}
+                    <td data-label="{{ sl_product.options[forloop.index0] }}">
+                      {% if forloop.first %}
+                        <div class="sl-wsp-option-cell">
+                          {% if row_image %}
+                            <img
+                              class="sl-wsp-row-image"
+                              src="{{ row_image | image_url: width: 80 }}"
+                              alt="{{ row_image.alt | default: variant.title | escape }}"
+                              loading="lazy"
+                              width="40"
+                              height="40"
+                            >
+                          {% endif %}
+                          <span class="sl-wsp-option-cell-text">
+                            {{ option_value }}
+                            {% if variant.sku != blank %}
+                              <span class="sl-wsp-sku">{{ variant.sku }}</span>
+                            {% endif %}
+                          </span>
+                        </div>
+                      {% else %}
+                        {{ option_value }}
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                  <td class="sl-wsp-price">
+                    {% if wsp %}
+                      <span class="sl-wsp-price-wsp">{{ 'wholesalePricing.wspPrefix' | t }}{{ wsp | times: 100 | money }}</span>
+                      <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ variant.price | money }}</span>
+                    {% else %}
+                      <span class="sl-wsp-price-wsp">{{ variant.price | money }}</span>
+                      {% if variant.compare_at_price > variant.price %}
+                        <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ variant.compare_at_price | money }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </td>
+                  <td class="sl-wsp-qty">
+                    {% if variant.available %}
+                      <div class="sl-wsp-stepper">
+                        <button
+                          type="button"
+                          class="sl-wsp-stepper-btn"
+                          data-sl-step="-1"
+                          data-variant-id="{{ variant.id }}"
+                          aria-label="{{ 'wholesalePricing.decrease' | t }}"
+                        >&minus;</button>
+                        <input
+                          type="number"
+                          inputmode="numeric"
+                          min="0"
+                          value="0"
+                          class="sl-wsp-qty-input"
+                          data-sl-qty-input
+                          data-variant-id="{{ variant.id }}"
+                          data-variant-price="{{ row_price_cents }}"
+                          aria-label="{{ 'wholesalePricing.quantity' | t }}: {{ variant.title | escape }}"
+                        >
+                        <button
+                          type="button"
+                          class="sl-wsp-stepper-btn"
+                          data-sl-step="1"
+                          data-variant-id="{{ variant.id }}"
+                          aria-label="{{ 'wholesalePricing.increase' | t }}"
+                        >+</button>
+                      </div>
+                    {% else %}
+                      <span class="sl-wsp-sold-out">{{ 'wholesalePricing.soldOut' | t }}</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      <button type="button" class="sl-wsp-add-to-cart" data-sl-add-to-cart disabled>
+        <span data-sl-add-to-cart-label>{{ 'wholesalePricing.addToCart' | t }}</span>
+      </button>
+
+      <div class="visually-hidden" role="status" aria-live="polite" data-sl-live-region></div>
+    {% else %}
+      <p class="sl-wsp-signin-prompt">
+        {{ 'wholesalePricing.signInPromptPrefix' | t }}
+        <a href="{{ routes.account_login_url }}">{{ 'wholesalePricing.signInLinkText' | t }}</a>
+        {{ 'wholesalePricing.signInPromptSuffix' | t }}
+      </p>
+    {% endif %}
+  </div>
+
+  <link rel="stylesheet" href="{{ 'wholesale-pricing.css' | asset_url }}">
+  <script src="{{ 'wholesale-pricing.js' | asset_url }}" defer></script>
+{% endunless %}
+
+{% schema %}
+{
+  "name": "Wholesale Pricing",
+  "target": "section",
+  "settings": [
+    { "type": "product", "id": "product", "label": "Product", "autofill": true }
+  ]
+}
+{% endschema %}

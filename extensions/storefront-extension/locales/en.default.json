@@ -101,5 +101,19 @@
     "activitySubmittedOn": "Submitted on",
     "activityAmount": "Amount",
     "activityStatus": "Status"
+  },
+  "wholesalePricing": {
+    "wspPrefix": "WSP ",
+    "msrp": "MSRP",
+    "price": "Price",
+    "quantity": "Quantity",
+    "decrease": "Decrease quantity",
+    "increase": "Increase quantity",
+    "addToCart": "Add to cart",
+    "addWithPrice": "Add ({{price}})",
+    "soldOut": "Sold out",
+    "signInPromptPrefix": "Please",
+    "signInLinkText": "sign in",
+    "signInPromptSuffix": "to see wholesale pricing"
   }
 }

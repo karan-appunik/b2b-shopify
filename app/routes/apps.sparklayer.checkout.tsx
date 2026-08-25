@@ -1,7 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import * as fs from "fs";
-import * as path from "path";
+import { fetchVariantPricing } from "../services/variantPricing.server";
 
 const DRAFT_ORDER_CREATE = `#graphql
   mutation DraftOrderCreate($input: DraftOrderInput!) {
@@ -97,7 +96,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  const logPath = "e:\\B2B\\SparkLayer\\admin-frontend\\debug.log";
   try {
     const { admin } = await authenticate.public.appProxy(request);
 
@@ -115,8 +113,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const loggedInCustomerId = url.searchParams.get("logged_in_customer_id");
 
     const payload = await request.json();
-    fs.appendFileSync(logPath, `\n\n--- Checkout Action at ${new Date().toISOString()} ---\n`);
-    fs.appendFileSync(logPath, `Payload: ${JSON.stringify(payload, null, 2)}\n`);
 
     const lineItems = Array.isArray(payload.lineItems) ? payload.lineItems : [];
     const currency = payload.currency || "USD";
@@ -128,42 +124,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    // Wholesale pricing is looked up fresh here rather than trusted from the
+    // cart drawer's payload — it no longer depends on a Shopify Segment /
+    // Automatic Discount having already applied to the cart (see
+    // priceListPush.server.ts), so this is the single source of truth for
+    // what the buyer actually pays.
+    const variantGids = lineItems.map(
+      (item: any) => `gid://shopify/ProductVariant/${item.variantId}`,
+    );
+    const pricing = await fetchVariantPricing(admin, variantGids);
+
     const input: Record<string, unknown> = {
       lineItems: lineItems.map((item: any) => {
+        const variantId = `gid://shopify/ProductVariant/${item.variantId}`;
         const line: Record<string, unknown> = {
-          variantId: `gid://shopify/ProductVariant/${item.variantId}`,
+          variantId,
           quantity: item.quantity,
         };
-        // item.price/originalPrice are in cents, sent by the cart drawer as
-        // cart.js's final_price/original_price (unit prices after and before
-        // the wholesale/segment discount). We override the unit price to the
-        // MSRP (originalPrice) so checkout displays it struck through, then
-        // apply a fixed-amount line discount to bring the total down to the
-        // wholesale price — instead of silently overriding straight to the
-        // net price, which hid the discount from the buyer at checkout.
-        const hasOriginal = typeof item.originalPrice === "number";
-        const hasPrice = typeof item.price === "number";
-        if (hasOriginal) {
-          line.priceOverride = {
-            amount: (item.originalPrice / 100).toFixed(2),
-            currencyCode: currency,
-          };
-        } else if (hasPrice) {
-          line.priceOverride = {
-            amount: (item.price / 100).toFixed(2),
-            currencyCode: currency,
-          };
-        }
-        if (hasOriginal && hasPrice) {
-          const discountCents = (item.originalPrice - item.price) * item.quantity;
-          if (discountCents > 0) {
+
+        const variantPricing = pricing.get(variantId);
+        if (!variantPricing) return line;
+
+        // Override to the native price so checkout shows it struck through,
+        // then apply a fixed-amount line discount to bring the total down to
+        // the wholesale price — instead of silently overriding straight to
+        // the net price, which would hide the discount from the buyer.
+        line.priceOverride = {
+          amount: variantPricing.price.toFixed(2),
+          currencyCode: currency,
+        };
+
+        if (
+          variantPricing.wholesalePrice != null &&
+          variantPricing.wholesalePrice < variantPricing.price
+        ) {
+          const discountPerUnit = Number((variantPricing.price - variantPricing.wholesalePrice).toFixed(2));
+          if (discountPerUnit > 0) {
             line.appliedDiscount = {
               title: "Wholesale Discount",
               valueType: "FIXED_AMOUNT",
-              value: Number((discountCents / 100).toFixed(2)),
+              value: discountPerUnit,
             };
           }
         }
+
         return line;
       }),
     };
@@ -205,11 +209,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    fs.appendFileSync(logPath, `Draft Order Input: ${JSON.stringify(input, null, 2)}\n`);
-
     const response = await admin.graphql(DRAFT_ORDER_CREATE, { variables: { input } });
     const body = await response.json();
-    fs.appendFileSync(logPath, `Draft Order Response: ${JSON.stringify(body, null, 2)}\n`);
 
     const result = body.data?.draftOrderCreate;
 
@@ -229,7 +230,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         variables: { id: result.draftOrder.id, paymentPending: true },
       });
       const completeBody = await completeResponse.json();
-      fs.appendFileSync(logPath, `Draft Order Complete Response: ${JSON.stringify(completeBody, null, 2)}\n`);
 
       const completeResult = completeBody.data?.draftOrderComplete;
       if (!completeResult || completeResult.userErrors?.length) {
@@ -251,7 +251,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   } catch (error: any) {
     console.error("checkout proxy error:", error);
-    fs.appendFileSync(logPath, `Error: ${error.stack || error.message || String(error)}\n`);
     return new Response(JSON.stringify({ error: error.message || String(error) }), {
       status: 500,
       headers: { "Content-Type": "application/json" },

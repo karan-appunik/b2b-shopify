@@ -38,52 +38,6 @@ const TAGS_REMOVE = `#graphql
   }
 `;
 
-const SEGMENT_CREATE = `#graphql
-  mutation SegmentCreate($name: String!, $query: String!) {
-    segmentCreate(name: $name, query: $query) {
-      segment { id }
-      userErrors { field message }
-    }
-  }
-`;
-
-const DISCOUNT_CREATE = `#graphql
-  mutation DiscountAutomaticBasicCreate($automaticBasicDiscount: DiscountAutomaticBasicInput!) {
-    discountAutomaticBasicCreate(automaticBasicDiscount: $automaticBasicDiscount) {
-      automaticDiscountNode { id }
-      userErrors { field message code }
-    }
-  }
-`;
-
-const DISCOUNT_UPDATE = `#graphql
-  mutation DiscountAutomaticBasicUpdate($id: ID!, $automaticBasicDiscount: DiscountAutomaticBasicInput!) {
-    discountAutomaticBasicUpdate(id: $id, automaticBasicDiscount: $automaticBasicDiscount) {
-      automaticDiscountNode { id }
-      userErrors { field message code }
-    }
-  }
-`;
-
-const DISCOUNT_DELETE = `#graphql
-  mutation DiscountAutomaticDelete($id: ID!) {
-    discountAutomaticDelete(id: $id) {
-      userErrors { field message }
-    }
-  }
-`;
-
-const VARIANT_PRICES_QUERY = `#graphql
-  query VariantPrices($ids: [ID!]!) {
-    nodes(ids: $ids) {
-      ... on ProductVariant {
-        id
-        contextualPricing(context: { country: US }) { price { amount } }
-      }
-    }
-  }
-`;
-
 export interface PushPriceListInput {
   priceListName: string;
   currency: string;
@@ -92,21 +46,12 @@ export interface PushPriceListInput {
   previousVariantIds?: string[];
   addCustomerIds: string[];
   removeCustomerIds: string[];
-  shopifySegmentId?: string | null;
-  discountItems: Array<{
-    variantId: string;
-    productTitle: string;
-    discountAmount: number;
-    shopifyDiscountId?: string | null;
-  }>;
-  removedDiscountIds?: string[];
 }
 
 export interface PushPriceListResult {
   success?: boolean;
   updatedCount?: number;
-  shopifySegmentId?: string;
-  itemDiscountIds?: Array<{ variantId: string; shopifyDiscountId: string }>;
+  failedTagCustomerIds?: string[];
   error?: string;
 }
 
@@ -184,13 +129,16 @@ async function syncCustomerTags(
   tag: string,
   addCustomerIds: string[],
   removeCustomerIds: string[],
-): Promise<void> {
+): Promise<{ failedCustomerIds: string[] }> {
+  const failedCustomerIds: string[] = [];
+
   for (const customerId of addCustomerIds) {
     const res = await admin.graphql(TAGS_ADD, { variables: { id: customerId, tags: [tag] } });
     const body = await res.json();
     const errors = body.data?.tagsAdd?.userErrors;
     if (errors?.length) {
       console.error("[priceListPush] failed to tag customer", customerId, errors);
+      failedCustomerIds.push(customerId);
     }
   }
 
@@ -200,137 +148,11 @@ async function syncCustomerTags(
     const errors = body.data?.tagsRemove?.userErrors;
     if (errors?.length) {
       console.error("[priceListPush] failed to untag customer", customerId, errors);
-    }
-  }
-}
-
-async function ensureSegment(
-  admin: Awaited<ReturnType<typeof getAdminForFirstShop>>,
-  priceListName: string,
-  tag: string,
-  existingSegmentId?: string | null,
-): Promise<{ segmentId?: string; error?: string }> {
-  if (existingSegmentId) {
-    return { segmentId: existingSegmentId };
-  }
-
-  const res = await admin.graphql(SEGMENT_CREATE, {
-    variables: {
-      name: `SparkLayer — ${priceListName}`,
-      query: `customer_tags CONTAINS '${tag}'`,
-    },
-  });
-  const body = await res.json();
-  const errors = body.data?.segmentCreate?.userErrors;
-  if (errors?.length) {
-    return { error: errors.map((e: { message: string }) => e.message).join("; ") };
-  }
-  const segmentId = body.data?.segmentCreate?.segment?.id;
-  if (!segmentId) return { error: "Shopify did not return a segment id" };
-  return { segmentId };
-}
-
-async function fetchLiveVariantPrices(
-  admin: Awaited<ReturnType<typeof getAdminForFirstShop>>,
-  variantIds: string[],
-): Promise<Map<string, number>> {
-  const prices = new Map<string, number>();
-  for (const batch of chunk(variantIds, 100)) {
-    const res = await admin.graphql(VARIANT_PRICES_QUERY, { variables: { ids: batch } });
-    const body = await res.json();
-    for (const node of body.data?.nodes || []) {
-      const amount = node?.contextualPricing?.price?.amount;
-      if (node?.id && amount != null) prices.set(node.id, Number(amount));
-    }
-  }
-  return prices;
-}
-
-async function syncDiscounts(
-  admin: Awaited<ReturnType<typeof getAdminForFirstShop>>,
-  input: PushPriceListInput,
-  segmentId: string,
-): Promise<{ itemDiscountIds: Array<{ variantId: string; shopifyDiscountId: string }>; error?: string }> {
-  const itemDiscountIds: Array<{ variantId: string; shopifyDiscountId: string }> = [];
-
-  // discountAmount must be relative to Shopify's live variant price, not the
-  // caller-supplied value, otherwise a stale price on the caller's side
-  // silently over/under-discounts the item at checkout.
-  const wholesaleByVariant = new Map(input.prices.map((p) => [p.variantId, Number(p.amount)]));
-  const livePrices = await fetchLiveVariantPrices(
-    admin,
-    input.discountItems.map((item) => item.variantId),
-  );
-
-  for (const rawItem of input.discountItems) {
-    const livePrice = livePrices.get(rawItem.variantId);
-    const wholesalePrice = wholesaleByVariant.get(rawItem.variantId);
-    const item =
-      livePrice != null && wholesalePrice != null
-        ? { ...rawItem, discountAmount: Number((livePrice - wholesalePrice).toFixed(2)) }
-        : rawItem;
-
-    if (item.discountAmount <= 0) {
-      if (item.shopifyDiscountId) {
-        const res = await admin.graphql(DISCOUNT_DELETE, { variables: { id: item.shopifyDiscountId } });
-        const body = await res.json();
-        const errors = body.data?.discountAutomaticDelete?.userErrors;
-        if (errors?.length) {
-          console.error("[priceListPush] failed to delete zero-discount item", errors);
-        }
-      }
-      continue;
-    }
-
-    const discountInput = {
-      title: `${input.priceListName} — ${item.productTitle} (${item.variantId})`,
-      startsAt: new Date().toISOString(),
-      context: { customerSegments: { add: [segmentId] } },
-      customerGets: {
-        value: {
-          discountAmount: {
-            amount: item.discountAmount.toFixed(2),
-            appliesOnEachItem: true,
-          },
-        },
-        items: { products: { productVariantsToAdd: [item.variantId] } },
-      },
-    };
-
-    if (item.shopifyDiscountId) {
-      const res = await admin.graphql(DISCOUNT_UPDATE, {
-        variables: { id: item.shopifyDiscountId, automaticBasicDiscount: discountInput },
-      });
-      const body = await res.json();
-      const errors = body.data?.discountAutomaticBasicUpdate?.userErrors;
-      if (errors?.length) {
-        return { itemDiscountIds, error: errors.map((e: { message: string }) => e.message).join("; ") };
-      }
-      itemDiscountIds.push({ variantId: item.variantId, shopifyDiscountId: item.shopifyDiscountId });
-    } else {
-      const res = await admin.graphql(DISCOUNT_CREATE, {
-        variables: { automaticBasicDiscount: discountInput },
-      });
-      const body = await res.json();
-      const errors = body.data?.discountAutomaticBasicCreate?.userErrors;
-      if (errors?.length) {
-        return { itemDiscountIds, error: errors.map((e: { message: string }) => e.message).join("; ") };
-      }
-      const newId = body.data?.discountAutomaticBasicCreate?.automaticDiscountNode?.id;
-      if (newId) itemDiscountIds.push({ variantId: item.variantId, shopifyDiscountId: newId });
+      failedCustomerIds.push(customerId);
     }
   }
 
-  for (const discountId of input.removedDiscountIds || []) {
-    const res = await admin.graphql(DISCOUNT_DELETE, { variables: { id: discountId } });
-    const body = await res.json();
-    const errors = body.data?.discountAutomaticDelete?.userErrors;
-    if (errors?.length) {
-      console.error("[priceListPush] failed to delete removed discount", errors);
-    }
-  }
-
-  return { itemDiscountIds };
+  return { failedCustomerIds };
 }
 
 export async function pushPriceListToShopify(
@@ -348,28 +170,23 @@ export async function pushPriceListToShopify(
       return { error: metafieldResult.error };
     }
 
-    await syncCustomerTags(admin, input.tag, input.addCustomerIds, input.removeCustomerIds);
-
-    const segmentResult = await ensureSegment(
+    // Tags are pure group-membership identifiers now (matching SparkLayer's
+    // model: a fixed base tag + one group-specific tag) — no Shopify Segment
+    // or Automatic Discount is created here anymore. Actual wholesale price
+    // enforcement happens in apps.sparklayer.checkout.tsx, which looks up
+    // each line item's sparklayer.wholesale_price metafield directly instead
+    // of depending on a Shopify-side discount having already applied.
+    const tagResult = await syncCustomerTags(
       admin,
-      input.priceListName,
       input.tag,
-      input.shopifySegmentId,
+      input.addCustomerIds,
+      input.removeCustomerIds,
     );
-    if (segmentResult.error || !segmentResult.segmentId) {
-      return { error: segmentResult.error || "Could not create customer segment" };
-    }
-
-    const discountResult = await syncDiscounts(admin, input, segmentResult.segmentId);
-    if (discountResult.error) {
-      return { error: discountResult.error };
-    }
 
     return {
       success: true,
       updatedCount: metafieldResult.updatedCount,
-      shopifySegmentId: segmentResult.segmentId,
-      itemDiscountIds: discountResult.itemDiscountIds,
+      failedTagCustomerIds: tagResult.failedCustomerIds,
     };
   } catch (err) {
     console.error("[priceListPush] failed to push price list to Shopify", err);

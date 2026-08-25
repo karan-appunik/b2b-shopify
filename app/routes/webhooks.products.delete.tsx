@@ -8,7 +8,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log(`Received ${topic} webhook for ${shop}`);
 
   const productId = (payload as { id: number | string }).id;
-  await deleteProductsByShopifyProductId(productId);
+  await deleteProductsByShopifyProductId(productId, shop);
 
   return new Response();
 };

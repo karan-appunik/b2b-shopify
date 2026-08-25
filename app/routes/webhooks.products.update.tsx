@@ -10,7 +10,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  await syncProductFromWebhookPayload(payload as ShopifyProductWebhookPayload);
+  await syncProductFromWebhookPayload(shop, payload as ShopifyProductWebhookPayload);
 
   return new Response();
 };
