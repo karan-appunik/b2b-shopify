@@ -103,6 +103,8 @@
   var paymentTermsProxyUrl = root.dataset.paymentTermsProxyUrl;
   var orderDetailProxyUrl = root.dataset.orderDetailProxyUrl;
   var ordersProxyUrl = root.dataset.ordersProxyUrl;
+  var variantPricingProxyUrl = root.dataset.variantPricingProxyUrl;
+  var wholesalePricing = {}; // variant_id (string) -> { price, wholesalePrice } in cents
   var customerId = root.dataset.customerId;
   var hasCustomer = root.dataset.hasCustomer === "true";
   var customerEmail = root.dataset.customerEmail || "";
@@ -1072,6 +1074,19 @@
     }).observe(nativeCartDrawer, { attributes: true, attributeFilter: ["class", "open"] });
   }
 
+  // Product cards / embeds (wholesale-pricing-card.js, wholesale-pricing.js,
+  // wholesale-pricing-embed.js) add to cart via a raw /cart/add.js fetch that
+  // bypasses the native theme cart-add flow, so the MutationObserver above
+  // never fires for them. Without this listener the drawer's cart data goes
+  // stale until it's closed/reopened (or the page is refreshed).
+  document.addEventListener("sparklayer:cart:updated", function () {
+    if (root.classList.contains("is-open")) {
+      refreshCart();
+    } else {
+      openDrawer();
+    }
+  });
+
   var CART_TRIGGER_SELECTOR = [
     '[data-testid="cart-drawer-trigger"]',
     '[aria-controls="cart-drawer"]',
@@ -1107,9 +1122,29 @@
     true
   );
 
+  // There's no more Shopify-side cart discount (see priceListPush.server.ts),
+  // so line.final_price/original_price are always equal now. wholesalePricing
+  // (fetched separately via variantPricingProxyUrl) is the actual source of
+  // truth for what this line will cost at checkout — fall back to Shopify's
+  // own price fields if a variant has no wholesale price on it.
+  function lineDisplayPrice(line) {
+    var pricing = wholesalePricing[String(line.variant_id)];
+    var msrp = line.original_price;
+    var unit = line.final_price;
+    if (pricing && pricing.price != null) msrp = pricing.price;
+    if (pricing && pricing.wholesalePrice != null && pricing.wholesalePrice < msrp) {
+      unit = pricing.wholesalePrice;
+    } else {
+      unit = msrp;
+    }
+    return { unit: unit, msrp: msrp };
+  }
+
   function renderLine(line) {
-    var unitPrice = line.final_price;
-    var showMsrp = line.original_price > unitPrice;
+    var displayPrice = lineDisplayPrice(line);
+    var unitPrice = displayPrice.unit;
+    var showMsrp = displayPrice.msrp > unitPrice;
+    var lineTotal = unitPrice * line.quantity;
     var meta = [line.variant_title, line.sku ? "SKU: " + line.sku : null]
       .filter(Boolean)
       .join(" | ");
@@ -1130,9 +1165,9 @@
           "</div>" +
         "</div>" +
         '<div class="sl-cart-line-price">' +
-          '<span class="sl-price">' + formatMoney(line.final_line_price) + "</span>" +
+          '<span class="sl-price">' + formatMoney(lineTotal) + "</span>" +
           '<span class="sl-per-unit">' + formatMoney(unitPrice) + escapeHtml(i18n.perUnit) + "</span>" +
-          (showMsrp ? '<span class="sl-msrp">' + escapeHtml(i18n.msrp) + ": " + formatMoney(line.original_price) + "</span>" : "") +
+          (showMsrp ? '<span class="sl-msrp">' + escapeHtml(i18n.msrp) + ": " + formatMoney(displayPrice.msrp) + "</span>" : "") +
         "</div>" +
       "</div>"
     );
@@ -1148,9 +1183,13 @@
       linesEl.innerHTML = cartData.items.map(renderLine).join("");
     }
 
+    var subtotal = (cartData.items || []).reduce(function (sum, line) {
+      return sum + lineDisplayPrice(line).unit * line.quantity;
+    }, 0);
+
     var subtotalEl = footerEl.querySelector(".sl-cart-subtotal-amount");
     var subtotalCountEl = footerEl.querySelector(".sl-cart-subtotal-count");
-    if (subtotalEl) subtotalEl.textContent = formatMoney(cartData.total_price);
+    if (subtotalEl) subtotalEl.textContent = formatMoney(subtotal);
     if (subtotalCountEl) {
       var lineWord = cartData.items.length === 1 ? i18n.line : i18n.lines;
       var itemWord = cartData.item_count === 1 ? i18n.item : i18n.items;
@@ -1162,17 +1201,68 @@
     return !!cart && Array.isArray(cart.items);
   }
 
+  function fetchWholesalePricing(variantIds) {
+    if (!variantPricingProxyUrl || !variantIds.length) {
+      wholesalePricing = {};
+      return Promise.resolve();
+    }
+    var url = variantPricingProxyUrl + "?ids=" + encodeURIComponent(variantIds.join(","));
+    return fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        var next = {};
+        (body.variants || []).forEach(function (v) {
+          next[String(v.variantId)] = {
+            price: v.price != null ? Math.round(v.price * 100) : null,
+            wholesalePrice: v.wholesalePrice != null ? Math.round(v.wholesalePrice * 100) : null,
+          };
+        });
+        wholesalePricing = next;
+      })
+      .catch(function () {
+        wholesalePricing = {};
+      });
+  }
+
+  // The theme's own header cart-icon custom element (Horizon: cart-icon.js)
+  // exposes renderCartBubble() publicly and already handles the DOM update,
+  // sessionStorage sync, and animation correctly — we just need to call it
+  // whenever we mutate the cart outside the native theme flow, since that
+  // element only listens for Shopify's native cart events by default.
+  function syncHeaderCartIcon(itemCount) {
+    document.querySelectorAll("cart-icon").forEach(function (icon) {
+      if (typeof icon.renderCartBubble === "function") {
+        icon.renderCartBubble(itemCount);
+      }
+    });
+  }
+
+  // Neither /cart.js nor /cart/change.js requests are sequenced, so quick
+  // successive actions (a qty +/- click before the previous one resolves, or
+  // a PDP add-to-cart landing mid-edit) can have their responses arrive out
+  // of order. Without a guard, a slower, now-stale response can resolve last
+  // and clobber cartData/the header count with an outdated total even though
+  // a newer request already returned the real one. This counter makes only
+  // the most recently *issued* request allowed to apply its result.
+  var cartMutationVersion = 0;
+
   function refreshCart() {
+    var requestVersion = ++cartMutationVersion;
     return fetch("/cart.js")
       .then(function (res) { return res.json(); })
       .then(function (cart) {
-        if (!isValidCart(cart)) return;
+        if (!isValidCart(cart) || requestVersion !== cartMutationVersion) return;
         cartData = cart;
-        if (currentStep === 0) renderCartLines();
+        syncHeaderCartIcon(cart.item_count);
+        var variantIds = (cart.items || []).map(function (item) { return item.variant_id; });
+        return fetchWholesalePricing(variantIds).then(function () {
+          if (currentStep === 0) renderCartLines();
+        });
       });
   }
 
   function changeLineQuantity(key, quantity) {
+    var requestVersion = ++cartMutationVersion;
     fetch("/cart/change.js", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1180,8 +1270,9 @@
     })
       .then(function (res) { return res.json(); })
       .then(function (cart) {
-        if (!isValidCart(cart)) return;
+        if (!isValidCart(cart) || requestVersion !== cartMutationVersion) return;
         cartData = cart;
+        syncHeaderCartIcon(cart.item_count);
         renderCartLines();
       });
   }
@@ -1312,7 +1403,9 @@
             return fetch("/cart/clear.js", { method: "POST" })
               .catch(function () {})
               .then(function () {
+                cartMutationVersion++;
                 cartData = { items: [], item_count: 0, total_price: 0, note: "" };
+                syncHeaderCartIcon(0);
                 setStep(3);
               });
           }

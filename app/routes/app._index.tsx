@@ -6,11 +6,11 @@ import { syncProductsToBackend } from "../services/productSync.server";
 import { syncCustomersToBackend } from "../services/customerSync.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   // Automatically sync store products and customers to the local MongoDB database
-  await syncProductsToBackend(admin);
-  await syncCustomersToBackend(admin);
+  await syncProductsToBackend(admin, session.shop);
+  await syncCustomersToBackend(admin, session.shop);
 
   const merchantPanelUrl = process.env.MERCHANT_PANEL_URL || "";
 

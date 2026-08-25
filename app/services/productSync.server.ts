@@ -125,7 +125,7 @@ function getBackendConfig(): { backendUrl: string; internalKey: string } | null 
   return { backendUrl, internalKey };
 }
 
-async function syncProductRows(rows: ProductRow[]): Promise<void> {
+async function syncProductRows(rows: ProductRow[], shop: string): Promise<void> {
   if (rows.length === 0) return;
 
   const config = getBackendConfig();
@@ -138,7 +138,7 @@ async function syncProductRows(rows: ProductRow[]): Promise<void> {
         "Content-Type": "application/json",
         "x-internal-api-key": config.internalKey,
       },
-      body: JSON.stringify({ products: batch }),
+      body: JSON.stringify({ shop, products: batch }),
     });
 
     if (!res.ok) {
@@ -147,7 +147,10 @@ async function syncProductRows(rows: ProductRow[]): Promise<void> {
   }
 }
 
-async function cleanupRemovedProductsOnBackend(activeVariantIds: string[]): Promise<void> {
+async function cleanupRemovedProductsOnBackend(
+  activeVariantIds: string[],
+  shop: string,
+): Promise<void> {
   const config = getBackendConfig();
   if (!config) return;
 
@@ -157,7 +160,7 @@ async function cleanupRemovedProductsOnBackend(activeVariantIds: string[]): Prom
       "Content-Type": "application/json",
       "x-internal-api-key": config.internalKey,
     },
-    body: JSON.stringify({ activeVariantIds }),
+    body: JSON.stringify({ activeVariantIds, shop }),
   });
 
   if (!res.ok) {
@@ -165,19 +168,19 @@ async function cleanupRemovedProductsOnBackend(activeVariantIds: string[]): Prom
   }
 }
 
-export async function syncProductsToBackend(admin: AdminApiContext): Promise<void> {
+export async function syncProductsToBackend(admin: AdminApiContext, shop: string): Promise<void> {
   if (!getBackendConfig()) return;
 
   try {
     const rows = await fetchAllProductRows(admin);
-    
+
     // Sync active products
-    await syncProductRows(rows);
-    
+    await syncProductRows(rows, shop);
+
     // Clean up products in local DB that were deleted in Shopify
     const activeVariantIds = rows.map((r) => r.shopifyVariantId);
-    await cleanupRemovedProductsOnBackend(activeVariantIds);
-    
+    await cleanupRemovedProductsOnBackend(activeVariantIds, shop);
+
     console.log(
       `[productSync] synced ${rows.length} product variant(s) and cleaned up removed products on backend-api`,
     );
@@ -187,6 +190,7 @@ export async function syncProductsToBackend(admin: AdminApiContext): Promise<voi
 }
 
 export async function syncProductFromWebhookPayload(
+  shop: string,
   payload: ShopifyProductWebhookPayload,
 ): Promise<void> {
   const rows: ProductRow[] = (payload.variants || [])
@@ -200,7 +204,7 @@ export async function syncProductFromWebhookPayload(
     }));
 
   try {
-    await syncProductRows(rows);
+    await syncProductRows(rows, shop);
     console.log(`[productSync] synced ${rows.length} variant(s) for product ${payload.id}`);
   } catch (err) {
     console.error("[productSync] failed to sync product from webhook", err);
@@ -209,6 +213,7 @@ export async function syncProductFromWebhookPayload(
 
 export async function deleteProductsByShopifyProductId(
   shopifyProductId: number | string,
+  shop: string,
 ): Promise<void> {
   const config = getBackendConfig();
   if (!config) return;
@@ -220,7 +225,7 @@ export async function deleteProductsByShopifyProductId(
         "Content-Type": "application/json",
         "x-internal-api-key": config.internalKey,
       },
-      body: JSON.stringify({ shopifyProductId: String(shopifyProductId) }),
+      body: JSON.stringify({ shopifyProductId: String(shopifyProductId), shop }),
     });
 
     if (!res.ok) {

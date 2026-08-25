@@ -1,0 +1,147 @@
+{% comment %}
+  Wholesale pricing widget for product-card contexts (collection grids,
+  "you may also like" carousels, etc.) — theme-agnostic app block.
+
+  Unlike blocks/wholesale-pricing.liquid (built for the PDP buy-box, always
+  a per-variant table), this renders a compact card: WSP/MSRP price line,
+  one <select> dropdown per product option, a qty stepper, and an Add to
+  Cart button — matching the reference "collection grid" design. Works on
+  any Online Store 2.0 theme whose product-card block list includes an
+  "@app" slot, since it reads the product via block.settings.product
+  (autofill) rather than any theme-specific liquid object.
+
+  Guests and non-B2B logged-in customers see a sign-in prompt (same gate as
+  wholesale-pricing.liquid).
+
+  Known limitation (shared with wholesale-pricing.liquid): sparklayer.wholesale_price
+  is a plain decimal metafield and does not auto-convert under Shopify Markets
+  multi-currency storefronts the way native variant.price does.
+{% endcomment %}
+
+{% unless block.settings.product == blank %}
+  {% assign sl_product = block.settings.product %}
+  {% assign sl_variant = sl_product.selected_or_first_available_variant %}
+  <div
+    id="sparklayer-wholesale-pricing-card-{{ section.id }}-{{ block.id }}"
+    class="sparklayer-wholesale-pricing sl-wsp-card"
+    data-money-format="{{ shop.money_format | strip_html }}"
+    data-currency="{{ cart.currency.iso_code }}"
+    data-i18n-add-to-cart="{{ 'wholesalePricing.addToCart' | t }}"
+    data-i18n-add-with-price="{{ 'wholesalePricing.addWithPrice' | t }}"
+    data-i18n-sold-out="{{ 'wholesalePricing.soldOut' | t }}"
+    {{ block.shopify_attributes }}
+  >
+    {% if customer.b2b? %}
+      <script type="application/json" data-sl-variants>
+        [
+          {% for variant in sl_product.variants %}
+            {% liquid
+              assign wsp = variant.metafields.sparklayer.wholesale_price.value
+              if wsp
+                assign row_price_cents = wsp | times: 100 | round
+              else
+                assign row_price_cents = variant.price
+              endif
+            %}
+            {
+              "id": {{ variant.id | json }},
+              "options": {{ variant.options | json }},
+              "price": {{ row_price_cents | json }},
+              "wsp": {{ wsp | default: null | json }},
+              "compareAtPrice": {{ variant.compare_at_price | default: null | json }},
+              "nativePrice": {{ variant.price | json }},
+              "available": {{ variant.available | json }}
+            }{% unless forloop.last %},{% endunless %}
+          {% endfor %}
+        ]
+      </script>
+
+      <div class="sl-wsp-price sl-wsp-card-price" data-sl-price>
+        {% if sl_variant.metafields.sparklayer.wholesale_price.value %}
+          <span class="sl-wsp-price-wsp" data-sl-price-primary>{{ 'wholesalePricing.wspPrefix' | t }}{{ sl_variant.metafields.sparklayer.wholesale_price.value | times: 100 | money }}</span>
+          <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ sl_variant.price | money }}</span>
+        {% else %}
+          <span class="sl-wsp-price-wsp" data-sl-price-primary>{{ sl_variant.price | money }}</span>
+          {% if sl_variant.compare_at_price > sl_variant.price %}
+            <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ sl_variant.compare_at_price | money }}</span>
+          {% else %}
+            <span class="sl-wsp-price-msrp" data-sl-price-secondary style="display:none;"></span>
+          {% endif %}
+        {% endif %}
+      </div>
+
+      {% for option in sl_product.options_with_values %}
+        <div class="sl-wsp-option">
+          <label class="sl-wsp-option-label" for="sl-wsp-option-{{ section.id }}-{{ block.id }}-{{ forloop.index0 }}">
+            {{ option.name }}
+          </label>
+          <select
+            id="sl-wsp-option-{{ section.id }}-{{ block.id }}-{{ forloop.index0 }}"
+            class="sl-wsp-option-select"
+            data-sl-option-select
+            data-option-index="{{ forloop.index0 }}"
+          >
+            {% for value in option.values %}
+              <option value="{{ value | escape }}" {% if value == option.selected_value %}selected{% endif %}>
+                {{ value }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endfor %}
+
+      <div class="sl-wsp-card-buy-row">
+        <div class="sl-wsp-stepper">
+          <button
+            type="button"
+            class="sl-wsp-stepper-btn"
+            data-sl-step="-1"
+            aria-label="{{ 'wholesalePricing.decrease' | t }}"
+          >&minus;</button>
+          <input
+            type="number"
+            inputmode="numeric"
+            min="0"
+            value="1"
+            class="sl-wsp-qty-input"
+            data-sl-qty-input
+            data-variant-id="{{ sl_variant.id }}"
+            aria-label="{{ 'wholesalePricing.quantity' | t }}"
+          >
+          <button
+            type="button"
+            class="sl-wsp-stepper-btn"
+            data-sl-step="1"
+            aria-label="{{ 'wholesalePricing.increase' | t }}"
+          >+</button>
+        </div>
+
+        <button type="button" class="sl-wsp-add-to-cart sl-wsp-card-add" data-sl-add-to-cart>
+          <span data-sl-add-to-cart-label>{{ 'wholesalePricing.addToCart' | t }}</span>
+        </button>
+      </div>
+
+      <div class="visually-hidden" role="status" aria-live="polite" data-sl-live-region></div>
+    {% else %}
+      <p class="sl-wsp-signin-prompt">
+        {{ 'wholesalePricing.signInPromptPrefix' | t }}
+        <a href="{{ routes.account_login_url }}">{{ 'wholesalePricing.signInLinkText' | t }}</a>
+        {{ 'wholesalePricing.signInPromptSuffix' | t }}
+      </p>
+    {% endif %}
+  </div>
+
+  <link rel="stylesheet" href="{{ 'wholesale-pricing.css' | asset_url }}">
+  <link rel="stylesheet" href="{{ 'wholesale-pricing-card.css' | asset_url }}">
+  <script src="{{ 'wholesale-pricing-card.js' | asset_url }}" defer></script>
+{% endunless %}
+
+{% schema %}
+{
+  "name": "Wholesale Pricing (Card)",
+  "target": "section",
+  "settings": [
+    { "type": "product", "id": "product", "label": "Product", "autofill": true }
+  ]
+}
+{% endschema %}
