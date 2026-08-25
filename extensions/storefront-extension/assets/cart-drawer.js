@@ -104,7 +104,21 @@
   var orderDetailProxyUrl = root.dataset.orderDetailProxyUrl;
   var ordersProxyUrl = root.dataset.ordersProxyUrl;
   var variantPricingProxyUrl = root.dataset.variantPricingProxyUrl;
-  var wholesalePricing = {}; // variant_id (string) -> { price, wholesalePrice } in cents
+  var wholesalePricing = {}; // variant_id (string) -> { price, tiers: [{minQuantity, price}] } in cents
+
+  // Picks the price for the highest tier whose minQuantity the given
+  // quantity still qualifies for (tiers must be sorted ascending).
+  function pickTierPrice(tiers, quantity) {
+    var applicable = null;
+    for (var i = 0; i < (tiers || []).length; i++) {
+      if (tiers[i].minQuantity <= quantity) {
+        applicable = tiers[i];
+      } else {
+        break;
+      }
+    }
+    return applicable ? applicable.price : null;
+  }
   var customerId = root.dataset.customerId;
   var hasCustomer = root.dataset.hasCustomer === "true";
   var customerEmail = root.dataset.customerEmail || "";
@@ -1132,8 +1146,9 @@
     var msrp = line.original_price;
     var unit = line.final_price;
     if (pricing && pricing.price != null) msrp = pricing.price;
-    if (pricing && pricing.wholesalePrice != null && pricing.wholesalePrice < msrp) {
-      unit = pricing.wholesalePrice;
+    var tierPrice = pricing ? pickTierPrice(pricing.tiers, line.quantity) : null;
+    if (tierPrice != null && tierPrice < msrp) {
+      unit = tierPrice;
     } else {
       unit = msrp;
     }
@@ -1214,7 +1229,9 @@
         (body.variants || []).forEach(function (v) {
           next[String(v.variantId)] = {
             price: v.price != null ? Math.round(v.price * 100) : null,
-            wholesalePrice: v.wholesalePrice != null ? Math.round(v.wholesalePrice * 100) : null,
+            tiers: (v.tiers || []).map(function (t) {
+              return { minQuantity: t.minQuantity, price: Math.round(t.price * 100) };
+            }),
           };
         });
         wholesalePricing = next;

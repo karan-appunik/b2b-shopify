@@ -1,6 +1,20 @@
 (function () {
   var ROOT_SELECTOR = ".sl-wsp-card";
 
+  // Picks the price for the highest tier whose minQuantity the given
+  // quantity still qualifies for (tiers must be sorted ascending).
+  function pickTierPrice(tiers, quantity) {
+    var applicable = null;
+    for (var i = 0; i < (tiers || []).length; i++) {
+      if (tiers[i].minQuantity <= quantity) {
+        applicable = tiers[i];
+      } else {
+        break;
+      }
+    }
+    return applicable ? applicable.price : null;
+  }
+
   function formatMoney(cents, moneyFormat) {
     var format = moneyFormat || "${{amount}}";
     var value = (cents / 100).toFixed(2);
@@ -19,6 +33,12 @@
     var variants;
     try {
       variants = JSON.parse(variantsScript.textContent);
+      for (var i = 0; i < variants.length; i++) {
+        var v = variants[i];
+        if ((!v.tiers || v.tiers.length === 0) && v.wsp !== null) {
+          v.tiers = [{ minQuantity: 1, price: v.wsp }];
+        }
+      }
     } catch (e) {
       return;
     }
@@ -73,11 +93,22 @@
       }
 
       qtyInput.dataset.variantId = String(variant.id);
-      qtyInput.dataset.variantPrice = String(variant.price);
+
+      // The primary price display always needs *a* price to show, even
+      // before the buyer has entered a real quantity, so the tier lookup
+      // is clamped to at least 1 — but the raw (possibly 0) qty below still
+      // drives the Add button's enabled state and its total. When no tier
+      // qualifies yet (e.g. a 5+ minimum and qty is still 1), falls back to
+      // the real native price — never the stale wholesale figure — so this
+      // always matches what checkout will actually charge for that qty.
+      var rawQty = Number(qtyInput.value) || 0;
+      var tierDollars = pickTierPrice(variant.tiers, Math.max(1, rawQty));
+      var effectivePrice = tierDollars != null ? Math.round(tierDollars * 100) : variant.nativePrice;
+      qtyInput.dataset.variantPrice = String(effectivePrice);
 
       if (priceEl && pricePrimary) {
-        if (variant.wsp) {
-          pricePrimary.textContent = "WSP " + formatMoney(variant.price, moneyFormat);
+        if (tierDollars != null) {
+          pricePrimary.textContent = "WSP " + formatMoney(effectivePrice, moneyFormat);
           if (priceSecondary) {
             priceSecondary.textContent = "MSRP: " + formatMoney(variant.nativePrice, moneyFormat);
             priceSecondary.style.display = "";
@@ -102,9 +133,8 @@
       } else {
         addButton.disabled = false;
         if (addLabel) {
-          var qty = Number(qtyInput.value) || 0;
-          addLabel.textContent = qty > 0
-            ? addWithPriceTemplate.replace("{{price}}", formatMoney(variant.price * qty, moneyFormat))
+          addLabel.textContent = rawQty > 0
+            ? addWithPriceTemplate.replace("{{price}}", formatMoney(effectivePrice * rawQty, moneyFormat))
             : addToCartText;
         }
       }

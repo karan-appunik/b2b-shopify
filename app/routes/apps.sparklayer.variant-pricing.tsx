@@ -32,6 +32,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         variantId: id,
         price: entry?.price ?? null,
         wholesalePrice: entry?.wholesalePrice ?? null,
+        tiers: entry?.tiers ?? [],
       };
     });
 
