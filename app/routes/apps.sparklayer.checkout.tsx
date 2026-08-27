@@ -1,6 +1,9 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { fetchVariantPricing, pickTierPrice } from "../services/variantPricing.server";
+import { getOrderLimits, checkOrderLimits } from "../services/orderLimits.server";
+import { getCreditInfo, checkCreditLimit, chargeCredit } from "../services/creditLimit.server";
+import { syncOrderRows, type OrderRow } from "../services/orderSync.server";
 
 const DRAFT_ORDER_CREATE = `#graphql
   mutation DraftOrderCreate($input: DraftOrderInput!) {
@@ -25,6 +28,27 @@ const DRAFT_ORDER_COMPLETE = `#graphql
           id
           name
           statusPageUrl
+          createdAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          totalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          shippingAddress {
+            address1
+            city
+            provinceCode
+            zip
+            country
+          }
+          customer {
+            id
+            displayName
+            email
+          }
         }
       }
       userErrors {
@@ -97,7 +121,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const { admin } = await authenticate.public.appProxy(request);
+    const { admin, session } = await authenticate.public.appProxy(request);
 
     if (!admin) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -133,6 +157,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       (item: any) => `gid://shopify/ProductVariant/${item.variantId}`,
     );
     const pricing = await fetchVariantPricing(admin, variantGids);
+
+    // Enforce the shopper's customer group order limits (set in the merchant
+    // panel's Customer Groups > Order quantity/total limits) before a draft
+    // order is ever created — quantity is the sum across every line, value
+    // is what the buyer is actually about to pay after wholesale/tier pricing.
+    const totalQuantity = lineItems.reduce(
+      (sum: number, item: any) => sum + Number(item.quantity || 0),
+      0,
+    );
+    const totalValue = lineItems.reduce((sum: number, item: any) => {
+      const variantId = `gid://shopify/ProductVariant/${item.variantId}`;
+      const variantPricing = pricing.get(variantId);
+      if (!variantPricing) return sum;
+      const tierPrice = pickTierPrice(variantPricing.tiers, item.quantity);
+      const unitPrice =
+        tierPrice != null && tierPrice < variantPricing.price ? tierPrice : variantPricing.price;
+      return sum + unitPrice * Number(item.quantity || 0);
+    }, 0);
+
+    const orderLimits = await getOrderLimits(session?.shop ?? "", loggedInCustomerId);
+    const limitViolation = checkOrderLimits(orderLimits, totalQuantity, totalValue, currency);
+    if (limitViolation) {
+      return new Response(JSON.stringify({ error: limitViolation }), {
+        status: 422,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // "account" is SparkLayer's real "Payment on Account" option — its own
+    // payment method, independent of Shopify's native Net Terms (Terms
+    // Net 30/60 is a separate option and never credit-checked). Enforce the
+    // customer's credit limit (real Shopify metafield, Customer Groups >
+    // Credit settings for the enforcement toggle) before letting them buy on
+    // credit, same as SparkLayer blocking "Payment on Account" once a
+    // shopper is over their limit.
+    if (payload.paymentMethod === "account") {
+      const creditInfo = await getCreditInfo(admin, session?.shop ?? "", loggedInCustomerId);
+      if (!creditInfo.onAccountEnabled) {
+        return new Response(
+          JSON.stringify({ error: "Payment on Account is not available for your account." }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const creditViolation = checkCreditLimit(creditInfo, totalValue);
+      if (creditViolation) {
+        return new Response(JSON.stringify({ error: creditViolation }), {
+          status: 422,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
 
     const input: Record<string, unknown> = {
       lineItems: lineItems.map((item: any) => {
@@ -197,7 +272,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
     }
 
-    if (payload.paymentMethod && payload.paymentMethod !== "pay_now" && loggedInCustomerId) {
+    // "account" (Payment on Account) is completed directly below without a
+    // Shopify payment-terms template — it doesn't depend on the company
+    // location's Net Terms setting at all, only on the customer group's own
+    // "Payment on account" toggle + credit limit checked above.
+    if (
+      payload.paymentMethod &&
+      payload.paymentMethod !== "pay_now" &&
+      payload.paymentMethod !== "account" &&
+      loggedInCustomerId
+    ) {
       const templateId = await findPaymentTermsTemplateId(admin, loggedInCustomerId, payload.paymentMethod);
       if (templateId) {
         const paymentTerms: Record<string, unknown> = { paymentTermsTemplateId: templateId };
@@ -222,11 +306,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // "Advance before shipping" is paid manually offline (CC/BT/ACH), so the
-    // buyer never visits Shopify's hosted checkout — complete the draft order
-    // immediately with payment marked pending and hand back the finished
-    // order instead of an invoiceUrl to redirect to.
-    if (payload.paymentMethod === "advance") {
+    if (payload.paymentMethod === "account") {
+      await chargeCredit(admin, session?.shop ?? "", loggedInCustomerId, totalValue);
+    }
+
+    // "Advance before shipping" and "Payment on Account" are both paid with
+    // no online payment step (offline CC/BT/ACH, or against the customer's
+    // credit line), so the buyer never visits Shopify's hosted checkout —
+    // complete the draft order immediately with payment marked pending and
+    // hand back the finished order instead of an invoiceUrl to redirect to.
+    if (payload.paymentMethod === "advance" || payload.paymentMethod === "account") {
       const completeResponse = await admin.graphql(DRAFT_ORDER_COMPLETE, {
         variables: { id: result.draftOrder.id, paymentPending: true },
       });
@@ -241,6 +330,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const order = completeResult.draftOrder.order;
+
+      // Push straight into backend-api instead of waiting on the orders/create
+      // webhook — for "advance"/"account" we already have the full order data
+      // right here, so the Activity/Home dashboards can show it the instant
+      // this response comes back rather than whenever the webhook lands.
+      const row: OrderRow = {
+        shopifyOrderId: order.id,
+        name: order.name,
+        orderedAt: order.createdAt,
+        totalPrice: Number(order.totalPriceSet.shopMoney.amount),
+        currency: order.totalPriceSet.shopMoney.currencyCode,
+        financialStatus: order.displayFinancialStatus || undefined,
+        fulfillmentStatus: order.displayFulfillmentStatus || undefined,
+        shippingAddress: order.shippingAddress
+          ? [
+              order.shippingAddress.address1,
+              order.shippingAddress.city,
+              order.shippingAddress.provinceCode,
+              order.shippingAddress.zip,
+              order.shippingAddress.country,
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : undefined,
+        customerName: order.customer?.displayName || undefined,
+        customerEmail: order.customer?.email || undefined,
+        shopifyCustomerId: order.customer?.id || undefined,
+      };
+      await syncOrderRows([row], session?.shop ?? "");
+
       return new Response(
         JSON.stringify({ order: { id: order.id, name: order.name, statusUrl: order.statusPageUrl } }),
         { headers: { "Content-Type": "application/json" } }

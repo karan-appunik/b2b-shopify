@@ -4,9 +4,12 @@
      data-address-proxy-url="/apps/sparklayer/customer-address"
      data-checkout-proxy-url="/apps/sparklayer/checkout"
      data-payment-terms-proxy-url="/apps/sparklayer/payment-terms"
+     data-credit-info-proxy-url="/apps/sparklayer/credit-info"
      data-order-detail-proxy-url="/apps/sparklayer/order-detail"
      data-orders-proxy-url="/apps/sparklayer/orders"
      data-variant-pricing-proxy-url="/apps/sparklayer/variant-pricing"
+     data-agent-context-proxy-url="/apps/sparklayer/agent-context"
+     data-agent-search-proxy-url="/apps/sparklayer/agent-search"
      data-customer-id="{% if customer %}{{ customer.id }}{% endif %}"
      data-has-customer="{% if customer %}true{% else %}false{% endif %}"
      data-customer-email="{% if customer %}{{ customer.email }}{% endif %}"
@@ -63,6 +66,7 @@
      data-i18n-pay-advance="{{ 'cartDrawer.payAdvance' | t }}"
      data-i18n-pay-net30="{{ 'cartDrawer.payNet30' | t }}"
      data-i18n-pay-now="{{ 'cartDrawer.payNow' | t }}"
+     data-i18n-pay-on-account="{{ 'cartDrawer.payOnAccount' | t }}"
      data-i18n-charged-immediately="{{ 'cartDrawer.chargedImmediately' | t }}"
      data-i18n-continue-to-checkout="{{ 'cartDrawer.continueToCheckout' | t }}"
      data-i18n-order-complete-title="{{ 'cartDrawer.orderCompleteTitle' | t }}"
@@ -97,6 +101,8 @@
      data-i18n-default-billing-address="{{ 'cartDrawer.defaultBillingAddress' | t }}"
      data-i18n-orders-placed-in="{{ 'cartDrawer.ordersPlacedIn' | t }}"
      data-i18n-set-as-default-address="{{ 'cartDrawer.setAsDefaultAddress' | t }}"
+     data-i18n-set-as-default-shipping="{{ 'cartDrawer.setAsDefaultShipping' | t }}"
+     data-i18n-set-as-default-billing="{{ 'cartDrawer.setAsDefaultBilling' | t }}"
      data-i18n-save-address="{{ 'cartDrawer.saveAddress' | t }}"
      data-i18n-activity-all="{{ 'cartDrawer.activityAll' | t }}"
      data-i18n-activity-awaiting-merchant="{{ 'cartDrawer.activityAwaitingMerchant' | t }}"
@@ -115,6 +121,9 @@
 
 <link rel="stylesheet" href="{{ 'cart-drawer.css' | asset_url }}">
 <script src="{{ 'cart-drawer.js' | asset_url }}" defer></script>
+
+<link rel="stylesheet" href="{{ 'agent-bar.css' | asset_url }}">
+<script src="{{ 'agent-bar.js' | asset_url }}" defer></script>
 
 {% schema %}
 {

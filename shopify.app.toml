@@ -44,6 +44,14 @@ api_version = "2026-10"
   uri = "/webhooks/customers/delete"
   topics = [ "customers/delete" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = [ "orders/create" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/updated"
+  topics = [ "orders/updated" ]
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 

@@ -54,6 +54,7 @@
     payAdvance: root.dataset.i18nPayAdvance,
     payNet30: root.dataset.i18nPayNet30,
     payNow: root.dataset.i18nPayNow,
+    payOnAccount: root.dataset.i18nPayOnAccount,
     chargedImmediately: root.dataset.i18nChargedImmediately,
     continueToCheckout: root.dataset.i18nContinueToCheckout,
     orderCompleteTitle: root.dataset.i18nOrderCompleteTitle,
@@ -88,6 +89,8 @@
     defaultBillingAddress: root.dataset.i18nDefaultBillingAddress,
     ordersPlacedIn: root.dataset.i18nOrdersPlacedIn,
     setAsDefaultAddress: root.dataset.i18nSetAsDefaultAddress,
+    setAsDefaultShipping: root.dataset.i18nSetAsDefaultShipping,
+    setAsDefaultBilling: root.dataset.i18nSetAsDefaultBilling,
     saveAddress: root.dataset.i18nSaveAddress,
     activityAll: root.dataset.i18nActivityAll,
     activityAwaitingMerchant: root.dataset.i18nActivityAwaitingMerchant,
@@ -101,6 +104,7 @@
   var addressProxyUrl = root.dataset.addressProxyUrl;
   var checkoutProxyUrl = root.dataset.checkoutProxyUrl;
   var paymentTermsProxyUrl = root.dataset.paymentTermsProxyUrl;
+  var creditInfoProxyUrl = root.dataset.creditInfoProxyUrl;
   var orderDetailProxyUrl = root.dataset.orderDetailProxyUrl;
   var ordersProxyUrl = root.dataset.ordersProxyUrl;
   var variantPricingProxyUrl = root.dataset.variantPricingProxyUrl;
@@ -245,16 +249,18 @@
   var cartData = { items: [], item_count: 0, total_price: 0, note: "" };
   var isAddingAddress = false;
   var addAddressError = "";
-  var isAccountAddressModalOpen = false;
   var accountAddAddressError = "";
   var accountAddAddressSaving = false;
   var checkoutError = "";
   var selectedPaymentMethod = "pay_now";
   var eligiblePaymentTerms = [];
   var netTermsDueInDays = 30;
+  var customerCreditLimit = null;
+  var customerCreditBalance = 0;
+  var customerOnAccountEnabled = false;
   var orderConfirmation = null;
   var activeTab = "cart";
-  var accountView = "dashboard"; // "dashboard" | "orders" | "order"
+  var accountView = "dashboard"; // "dashboard" | "orders" | "order" | "addAddress"
   var accountOrders = null;
   var accountOrdersError = "";
   var accountOrderCounts = null;
@@ -345,10 +351,10 @@
       '<input type="text" class="sl-cart-field sl-cart-field-full" data-field="address2" placeholder="' + escapeHtml(i18n.line2) + '">' +
       '<input type="text" class="sl-cart-field" data-field="city" placeholder="' + escapeHtml(i18n.city) + ' *" required>' +
       '<input type="text" class="sl-cart-field" data-field="zip" placeholder="' + escapeHtml(i18n.zipCode) + '">' +
+      '<select class="sl-cart-field" data-field="provinceCode">' + renderProvinceOptions(defaultCountry, null) + "</select>" +
       '<select class="sl-cart-field" data-field="countryCode" data-sl-country-select>' +
         COUNTRIES.map(function (c) { return '<option value="' + c.code + '"' + (c.code === defaultCountry ? " selected" : "") + ">" + escapeHtml(c.name) + "</option>"; }).join("") +
       "</select>" +
-      '<select class="sl-cart-field" data-field="provinceCode">' + renderProvinceOptions(defaultCountry, null) + "</select>" +
       '<input type="tel" class="sl-cart-field sl-cart-field-full" data-field="phone" placeholder="' + escapeHtml(i18n.phone) + '">'
     );
   }
@@ -370,27 +376,26 @@
     );
   }
 
-  function renderAccountAddressModal() {
-    if (!isAccountAddressModalOpen) return "";
+  // Full-page "Add new address" view within the My Account tab — reached
+  // from the Address Book's "Add a new address" link or the bookmark icon
+  // on an existing address row (see showAccountAddAddress).
+  function renderAccountAddAddressBody() {
     var defaultCountry = COUNTRIES[0].code;
     return (
-      '<div class="sl-cart-modal-wrap">' +
-        '<div class="sl-cart-modal-backdrop" data-sl-close-account-address-modal></div>' +
-        '<div class="sl-cart-modal" role="dialog" aria-modal="true" aria-label="' + escapeHtml(i18n.addNewAddressTitle) + '">' +
-          '<div class="sl-cart-modal-header">' +
-            '<h3 class="sl-cart-heading">' + escapeHtml(i18n.addNewAddressTitle) + "</h3>" +
-            '<button type="button" class="sl-cart-modal-close" data-sl-close-account-address-modal aria-label="' + escapeHtml(i18n.close) + '">&times;</button>' +
-          "</div>" +
-          (accountAddAddressError ? '<p class="sl-cart-form-error">' + escapeHtml(accountAddAddressError) + "</p>" : "") +
-          '<div class="sl-cart-modal-form">' +
-            renderAddressFormFields(defaultCountry) +
-            '<label class="sl-cart-checkbox-row sl-cart-field-full"><input type="checkbox" data-sl-set-default-address> ' + escapeHtml(i18n.setAsDefaultAddress) + "</label>" +
-          "</div>" +
-          '<div class="sl-cart-modal-footer">' +
-            '<button type="button" class="sl-cart-modal-cancel" data-sl-close-account-address-modal>' + escapeHtml(i18n.cancel) + "</button>" +
-            '<button type="button" class="sl-cart-modal-save" data-sl-save-account-address' + (accountAddAddressSaving ? " disabled" : "") + '>' + escapeHtml(i18n.saveAddress) + "</button>" +
-          "</div>" +
+      '<div class="sl-cart-account">' +
+        '<div class="sl-cart-account-breadcrumb">' +
+          '<a href="#" data-sl-account-home>' + escapeHtml(i18n.myAccountTitle) + "</a>" +
+          ' <span>&rsaquo;</span> ' + escapeHtml(i18n.addressBook) +
         "</div>" +
+        '<h3 class="sl-cart-heading">' + escapeHtml(i18n.addNewAddressTitle) + "</h3>" +
+        (accountAddAddressError ? '<p class="sl-cart-form-error">' + escapeHtml(accountAddAddressError) + "</p>" : "") +
+        '<div class="sl-cart-address-form">' +
+          renderAddressFormFields(defaultCountry) +
+          '<label class="sl-cart-checkbox-row sl-cart-field-full"><input type="checkbox" data-sl-set-default-shipping> ' + escapeHtml(i18n.setAsDefaultShipping) + "</label>" +
+          '<label class="sl-cart-checkbox-row sl-cart-field-full"><input type="checkbox" data-sl-set-default-billing> ' + escapeHtml(i18n.setAsDefaultBilling) + "</label>" +
+        "</div>" +
+        '<button type="button" class="sl-cart-checkout" data-sl-save-account-address' + (accountAddAddressSaving ? " disabled" : "") + '>' + escapeHtml(i18n.saveAddress) + "</button>" +
+        '<a href="#" class="sl-cart-account-cancel-link" data-sl-account-home>' + escapeHtml(i18n.cancel) + "</a>" +
       "</div>"
     );
   }
@@ -447,6 +452,7 @@
           renderPaymentOption("advance", i18n.payAdvance, ICON_BOOKMARK, eligiblePaymentTerms.indexOf("advance") === -1) +
           renderPaymentOption("net30", payNet30Label(), ICON_BOOKMARK, eligiblePaymentTerms.indexOf("net30") === -1) +
           renderPaymentOption("pay_now", i18n.payNow, ICON_CARD, false) +
+          (customerOnAccountEnabled ? renderPaymentOption("account", i18n.payOnAccount, ICON_BOOKMARK, false) : "") +
         "</div>" +
         banner +
       "</div>"
@@ -664,7 +670,7 @@
           '<span class="sl-cart-account-label">' + escapeHtml(label) + "</span>" +
           '<p class="sl-cart-account-address-summary">' + escapeHtml(formatAddressSummary(address) || "—") + "</p>" +
         "</div>" +
-        '<a href="/account/addresses" class="sl-cart-remove" aria-label="' + escapeHtml(i18n.addNewAddress) + '">' + ICON_BOOKMARK + "</a>" +
+        '<a href="#" class="sl-cart-remove" data-sl-open-account-address-modal aria-label="' + escapeHtml(i18n.addNewAddress) + '">' + ICON_BOOKMARK + "</a>" +
       "</div>"
     );
   }
@@ -700,11 +706,11 @@
           "</div>" +
           '<div class="sl-cart-account-field">' +
             '<span class="sl-cart-account-label">' + escapeHtml(i18n.creditLimit) + "</span>" +
-            "<span>" + escapeHtml(i18n.notSet) + "</span>" +
+            "<span>" + escapeHtml(customerCreditLimit != null ? String(customerCreditLimit) : i18n.notSet) + "</span>" +
           "</div>" +
           '<div class="sl-cart-account-field">' +
             '<span class="sl-cart-account-label">' + escapeHtml(i18n.availableCredit) + "</span>" +
-            "<span>" + escapeHtml(i18n.notSet) + "</span>" +
+            "<span>" + escapeHtml(customerCreditLimit != null ? String(Math.max(customerCreditLimit - customerCreditBalance, 0)) : i18n.notSet) + "</span>" +
           "</div>" +
           '<div class="sl-cart-account-field sl-cart-account-field-full">' +
             '<span class="sl-cart-account-label">' + escapeHtml(i18n.netPaymentTerms) + "</span>" +
@@ -823,25 +829,21 @@
   var stepsEl = root.querySelector(".sl-cart-steps");
   var bodyEl = root.querySelector(".sl-cart-body");
   var footerEl = root.querySelector(".sl-cart-footer");
-  var modalHostEl = root.querySelector(".sl-cart-modal-host");
   tabsEl.innerHTML = renderTabsHtml();
 
-  function updateAccountAddressModal() {
-    modalHostEl.innerHTML = renderAccountAddressModal();
-  }
-
-  function openAccountAddressModal() {
-    isAccountAddressModalOpen = true;
+  function resetAccountAddAddressState() {
     accountAddAddressError = "";
     accountAddAddressSaving = false;
-    updateAccountAddressModal();
   }
 
-  function closeAccountAddressModal() {
-    isAccountAddressModalOpen = false;
-    accountAddAddressError = "";
-    accountAddAddressSaving = false;
-    updateAccountAddressModal();
+  function showAccountAddAddress() {
+    activeTab = "account";
+    accountView = "addAddress";
+    resetAccountAddAddressState();
+    tabsEl.innerHTML = renderTabsHtml();
+    stepsEl.innerHTML = "";
+    footerEl.innerHTML = "";
+    bodyEl.innerHTML = renderAccountAddAddressBody();
   }
 
   function setStep(step) {
@@ -851,7 +853,7 @@
     isAddingAddress = false;
     addAddressError = "";
     checkoutError = "";
-    closeAccountAddressModal();
+    resetAccountAddAddressState();
     stepsEl.innerHTML = renderStepsHtml();
     if (currentStep === 0) {
       bodyEl.innerHTML = renderCartBody();
@@ -940,7 +942,7 @@
     activeTab = "account";
     accountView = "dashboard";
     recentActivityFilter = "all";
-    closeAccountAddressModal();
+    resetAccountAddAddressState();
     tabsEl.innerHTML = renderTabsHtml();
     stepsEl.innerHTML = "";
     footerEl.innerHTML = "";
@@ -986,10 +988,14 @@
   }
 
   function readAccountAddressForm() {
-    var values = readAddressFormFields(modalHostEl);
-    var defaultCheckbox = modalHostEl.querySelector("[data-sl-set-default-address]");
+    var values = readAddressFormFields(bodyEl);
+    var shippingCheckbox = bodyEl.querySelector("[data-sl-set-default-shipping]");
+    var billingCheckbox = bodyEl.querySelector("[data-sl-set-default-billing]");
     values.saveToBook = true;
-    values.setDefault = !!(defaultCheckbox && defaultCheckbox.checked);
+    // Shopify only stores one default address per customer — checking
+    // either box sets it, since there's no separate shipping/billing
+    // default at the API level.
+    values.setDefault = !!((shippingCheckbox && shippingCheckbox.checked) || (billingCheckbox && billingCheckbox.checked));
     return values;
   }
 
@@ -1065,12 +1071,34 @@
       });
   }
 
+  function fetchCreditInfo() {
+    if (!creditInfoProxyUrl || !customerId) return;
+    var url = creditInfoProxyUrl + "?logged_in_customer_id=" + encodeURIComponent(customerId);
+    fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        customerCreditLimit = typeof body.creditLimit === "number" ? body.creditLimit : null;
+        customerCreditBalance = typeof body.balance === "number" ? body.balance : 0;
+        customerOnAccountEnabled = !!body.onAccountEnabled;
+        if (activeTab === "account" && accountView === "dashboard") {
+          bodyEl.innerHTML = renderAccountDashboardBody();
+        }
+        if (currentStep === 2) renderReviewPayStep();
+      })
+      .catch(function () {
+        customerCreditLimit = null;
+        customerCreditBalance = 0;
+        customerOnAccountEnabled = false;
+      });
+  }
+
   function openDrawer() {
     root.classList.add("is-open");
     document.body.style.overflow = "hidden";
     setStep(0);
     refreshCart();
     fetchPaymentTerms();
+    fetchCreditInfo();
   }
 
   function closeDrawer() {
@@ -1173,7 +1201,7 @@
           '<div class="sl-cart-line-actions">' +
             '<div class="sl-cart-qty">' +
               '<button type="button" data-sl-qty="-1">&minus;</button>' +
-              '<input type="text" value="' + line.quantity + '" readonly>' +
+              '<input type="text" inputmode="numeric" pattern="[0-9]*" value="' + line.quantity + '" data-sl-qty-input>' +
               '<button type="button" data-sl-qty="1">+</button>' +
             "</div>" +
             '<button type="button" class="sl-cart-remove" data-sl-remove aria-label="' + escapeHtml(i18n.remove) + '">' + ICON_TRASH + "</button>" +
@@ -1276,6 +1304,17 @@
           if (currentStep === 0) renderCartLines();
         });
       });
+  }
+
+  // Updates the local cart snapshot immediately (before the network request
+  // resolves) so a rapid second +/- click or keystroke computes its delta
+  // off the just-changed quantity instead of the stale value still sitting
+  // in cartData from before the first request was even sent.
+  function applyOptimisticQuantity(key, quantity) {
+    var line = (cartData.items || []).filter(function (i) { return i.key === key; })[0];
+    if (!line) return;
+    cartData.item_count = Math.max(0, (cartData.item_count || 0) + (quantity - line.quantity));
+    line.quantity = quantity;
   }
 
   function changeLineQuantity(key, quantity) {
@@ -1597,14 +1636,7 @@
     var openAccountAddressLink = event.target.closest("[data-sl-open-account-address-modal]");
     if (openAccountAddressLink) {
       event.preventDefault();
-      openAccountAddressModal();
-      return;
-    }
-
-    var closeAccountAddressTarget = event.target.closest("[data-sl-close-account-address-modal]");
-    if (closeAccountAddressTarget) {
-      event.preventDefault();
-      closeAccountAddressModal();
+      showAccountAddAddress();
       return;
     }
 
@@ -1615,23 +1647,20 @@
       var accountValues = readAccountAddressForm();
       if (!addAddressFormIsValid(accountValues)) {
         accountAddAddressError = i18n.addressSaveError;
-        updateAccountAddressModal();
+        bodyEl.innerHTML = renderAccountAddAddressBody();
         return;
       }
       accountAddAddressSaving = true;
       accountAddAddressError = "";
-      updateAccountAddressModal();
+      bodyEl.innerHTML = renderAccountAddAddressBody();
       saveAccountAddress(accountValues)
         .then(function () {
-          closeAccountAddressModal();
-          if (activeTab === "account" && accountView === "dashboard") {
-            bodyEl.innerHTML = renderAccountDashboardBody();
-          }
+          showAccountTab();
         })
         .catch(function (err) {
           accountAddAddressSaving = false;
           accountAddAddressError = err.message || i18n.addressSaveError;
-          updateAccountAddressModal();
+          bodyEl.innerHTML = renderAccountAddAddressBody();
         });
       return;
     }
@@ -1641,9 +1670,12 @@
       var key = lineEl.dataset.lineKey;
       var qtyBtn = event.target.closest("[data-sl-qty]");
       if (qtyBtn) {
-        var input = lineEl.querySelector(".sl-cart-qty input");
-        var next = parseInt(input.value, 10) + parseInt(qtyBtn.dataset.slQty, 10);
-        changeLineQuantity(key, Math.max(0, next));
+        var currentLine = (cartData.items || []).filter(function (i) { return i.key === key; })[0];
+        var current = currentLine ? currentLine.quantity : parseInt(lineEl.querySelector(".sl-cart-qty input").value, 10) || 0;
+        var next = Math.max(0, current + parseInt(qtyBtn.dataset.slQty, 10));
+        applyOptimisticQuantity(key, next);
+        renderCartLines();
+        changeLineQuantity(key, next);
         return;
       }
       if (event.target.closest("[data-sl-remove]")) {
@@ -1683,6 +1715,11 @@
   });
 
   root.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && event.target.matches("[data-sl-qty-input]")) {
+      event.preventDefault();
+      event.target.blur();
+      return;
+    }
     if (event.key !== "Enter" || !event.target.classList.contains("sl-cart-search-input")) return;
     var searchInput = event.target;
     var searchResultsEl = bodyEl.querySelector(".sl-cart-search-results");
@@ -1703,6 +1740,22 @@
   });
 
   root.addEventListener("change", function (event) {
+    if (event.target.matches("[data-sl-qty-input]")) {
+      var qtyInput = event.target;
+      var qtyLineEl = qtyInput.closest(".sl-cart-line");
+      var qtyKey = qtyLineEl && qtyLineEl.dataset.lineKey;
+      var qtyLine = qtyKey && (cartData.items || []).filter(function (i) { return i.key === qtyKey; })[0];
+      var parsedQty = parseInt(qtyInput.value, 10);
+      if (!qtyLine || isNaN(parsedQty) || parsedQty < 0) {
+        renderCartLines();
+        return;
+      }
+      applyOptimisticQuantity(qtyKey, parsedQty);
+      renderCartLines();
+      changeLineQuantity(qtyKey, parsedQty);
+      return;
+    }
+
     if (event.target.matches("[data-sl-order-year]")) {
       selectedOrderYear = parseInt(event.target.value, 10);
       accountOrders = null;

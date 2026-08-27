@@ -512,13 +512,15 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin-bottom: 16px;
 }
 
 .sl-cart-field {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--sl-border);
-  border-radius: 8px;
+  border: 1px solid var(--sl-border) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
   padding: 11px 14px;
   font-size: 14px;
   font-family: inherit;
@@ -807,6 +809,19 @@ select.sl-cart-field {
   cursor: pointer;
   text-decoration: none;
   box-sizing: border-box;
+}
+
+.sl-cart-account-cancel-link {
+  display: block;
+  text-align: center;
+  margin-top: 12px;
+  color: var(--sl-muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.sl-cart-account-cancel-link:hover {
+  text-decoration: underline;
 }
 
 .sl-cart-complete {

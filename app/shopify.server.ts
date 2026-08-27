@@ -8,7 +8,9 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 import { syncProductsToBackend } from "./services/productSync.server";
 import { syncCustomersToBackend } from "./services/customerSync.server";
+import { syncOrdersToBackend } from "./services/orderSync.server";
 import { ensureStorefrontAccessToken } from "./services/storefrontToken.server";
+import { ensurePaymentOnAccountMetafieldDefinition } from "./services/customerCreditMetafield.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -22,8 +24,10 @@ const shopify = shopifyApp({
   hooks: {
     afterAuth: async ({ session, admin }) => {
       await shopify.registerWebhooks({ session });
+      await ensurePaymentOnAccountMetafieldDefinition(admin);
       await syncProductsToBackend(admin, session.shop);
       await syncCustomersToBackend(admin, session.shop);
+      await syncOrdersToBackend(admin, session.shop);
       await ensureStorefrontAccessToken(admin);
     },
   },

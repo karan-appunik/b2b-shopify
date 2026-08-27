@@ -1,5 +1,6 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { unauthenticated } from "../shopify.server";
+import { CREDIT_METAFIELD_NAMESPACE, CREDIT_METAFIELD_KEY } from "./customerCreditMetafield.server";
 
 const CUSTOMERS_QUERY = `#graphql
   query SyncCustomers($cursor: String) {
@@ -31,6 +32,9 @@ const CUSTOMERS_QUERY = `#graphql
               }
             }
           }
+          creditMetafield: metafield(namespace: "${CREDIT_METAFIELD_NAMESPACE}", key: "${CREDIT_METAFIELD_KEY}") {
+            value
+          }
         }
       }
     }
@@ -53,6 +57,9 @@ const CUSTOMER_COMPANY_QUERY = `#graphql
           }
         }
       }
+      creditMetafield: metafield(namespace: "${CREDIT_METAFIELD_NAMESPACE}", key: "${CREDIT_METAFIELD_KEY}") {
+        value
+      }
     }
   }
 `;
@@ -66,7 +73,29 @@ type CustomerRow = {
   shopifyCompanyId?: string;
   shopifyCompanyLocationId?: string;
   shopifyCompanyName?: string;
+  creditLimit?: number | null;
+  creditBalance?: number;
 };
+
+// The Mongo creditLimit/creditBalance fields are a read-only mirror of
+// Shopify's real "payment_on_account" metafield (source of truth) — kept in
+// sync here purely so the merchant panel's customer page has something to
+// display without needing its own Shopify API access.
+function creditFieldsFromMetafield(rawValue: string | null | undefined): {
+  creditLimit?: number | null;
+  creditBalance?: number;
+} {
+  if (!rawValue) return {};
+  try {
+    const parsed = JSON.parse(rawValue) as { credit_limit?: number | null; balance?: number };
+    return {
+      creditLimit: parsed.credit_limit ?? null,
+      creditBalance: parsed.balance ?? 0,
+    };
+  } catch {
+    return {};
+  }
+}
 
 type CompanyContactProfile = {
   company: {
@@ -105,6 +134,7 @@ interface CustomersQueryResponse {
           tags: string[];
           defaultAddress: { company: string | null } | null;
           companyContactProfiles: CompanyContactProfile[];
+          creditMetafield: { value: string } | null;
         };
       }>;
     };
@@ -113,7 +143,10 @@ interface CustomersQueryResponse {
 
 interface CustomerCompanyQueryResponse {
   data: {
-    customer: { companyContactProfiles: CompanyContactProfile[] } | null;
+    customer: {
+      companyContactProfiles: CompanyContactProfile[];
+      creditMetafield: { value: string } | null;
+    } | null;
   };
 }
 
@@ -154,6 +187,7 @@ async function fetchAllCustomerRows(admin: AdminApiContext): Promise<CustomerRow
         tags: customer.tags || [],
         shopifyCustomerId: customer.id,
         ...firstCompanyInfo(customer.companyContactProfiles),
+        ...creditFieldsFromMetafield(customer.creditMetafield?.value),
       });
     }
 
@@ -250,17 +284,20 @@ export async function syncCustomersToBackend(admin: AdminApiContext, shop: strin
   }
 }
 
-async function fetchCompanyInfoForCustomer(
+async function fetchCompanyAndCreditInfoForCustomer(
   shop: string,
   shopifyCustomerGid: string,
-): Promise<ReturnType<typeof firstCompanyInfo>> {
+): Promise<ReturnType<typeof firstCompanyInfo> & ReturnType<typeof creditFieldsFromMetafield>> {
   try {
     const { admin } = await unauthenticated.admin(shop);
     const response = await admin.graphql(CUSTOMER_COMPANY_QUERY, {
       variables: { id: shopifyCustomerGid },
     });
     const body = (await response.json()) as CustomerCompanyQueryResponse;
-    return firstCompanyInfo(body.data.customer?.companyContactProfiles);
+    return {
+      ...firstCompanyInfo(body.data.customer?.companyContactProfiles),
+      ...creditFieldsFromMetafield(body.data.customer?.creditMetafield?.value),
+    };
   } catch (err) {
     console.error("[customerSync] failed to look up company for webhook customer", err);
     return {};
@@ -274,7 +311,7 @@ export async function syncCustomerFromWebhookPayload(
   if (!payload.email) return;
 
   const shopifyCustomerId = `gid://shopify/Customer/${payload.id}`;
-  const companyInfo = await fetchCompanyInfoForCustomer(shop, shopifyCustomerId);
+  const companyInfo = await fetchCompanyAndCreditInfoForCustomer(shop, shopifyCustomerId);
 
   const rows: CustomerRow[] = [
     {
