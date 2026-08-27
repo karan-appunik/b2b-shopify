@@ -28,6 +28,18 @@
       .replace(/\{\{\s*amount\s*\}\}/, value);
   }
 
+  function pickTierPrice(tiers, quantity) {
+    var applicable = null;
+    for (var i = 0; i < (tiers || []).length; i++) {
+      if (tiers[i].minQuantity <= quantity) {
+        applicable = tiers[i];
+      } else {
+        break;
+      }
+    }
+    return applicable ? applicable.price : null;
+  }
+
   function extractProductId(card) {
     var id = card.dataset.productId;
     return id ? "gid://shopify/Product/" + id : null;
@@ -45,6 +57,7 @@
     "        price { amount }" +
     "        compareAtPrice { amount }" +
     "        wsp: metafield(namespace: \"sparklayer\", key: \"wholesale_price\") { value }" +
+    "        tiers: metafield(namespace: \"sparklayer\", key: \"wholesale_price_tiers\") { value }" +
     "      }" +
     "    }" +
     "  }" +
@@ -70,6 +83,20 @@
           var wspRaw = v.wsp && v.wsp.value ? Number(v.wsp.value) : null;
           var nativePrice = Math.round(Number(v.price.amount) * 100);
           var compareAt = v.compareAtPrice ? Math.round(Number(v.compareAtPrice.amount) * 100) : null;
+          
+          var tiersParsed = [];
+          if (v.tiers && v.tiers.value) {
+            try {
+              tiersParsed = JSON.parse(v.tiers.value) || [];
+            } catch (e) {
+              tiersParsed = [];
+            }
+          }
+          
+          if (tiersParsed.length === 0 && wspRaw !== null) {
+            tiersParsed = [{ minQuantity: 1, price: wspRaw }];
+          }
+
           return {
             id: v.id.split("/").pop(),
             options: v.selectedOptions.map(function (o) {
@@ -80,6 +107,7 @@
             price: wspRaw !== null ? Math.round(wspRaw * 100) : nativePrice,
             nativePrice: nativePrice,
             compareAtPrice: compareAt,
+            tiers: tiersParsed,
           };
         });
 
@@ -200,8 +228,12 @@
       }
       qtyInput.dataset.variantId = variant.id;
 
-      if (variant.wsp) {
-        pricePrimary.textContent = "WSP " + formatMoney(variant.price / 100, moneyFormat);
+      var qty = Number(qtyInput.value) || 0;
+      var tierDollars = pickTierPrice(variant.tiers, Math.max(1, qty));
+      var effectivePrice = tierDollars != null ? Math.round(tierDollars * 100) : variant.nativePrice;
+
+      if (tierDollars != null) {
+        pricePrimary.textContent = "WSP " + formatMoney(effectivePrice / 100, moneyFormat);
         priceSecondary.textContent = "MSRP: " + formatMoney(variant.nativePrice / 100, moneyFormat);
         priceSecondary.style.display = "";
       } else {
@@ -220,9 +252,8 @@
         addLabel.textContent = soldOutText;
       } else {
         addButton.disabled = false;
-        var qty = Number(qtyInput.value) || 0;
         addLabel.textContent = qty > 0
-          ? addWithPriceTemplate.replace("{{price}}", formatMoney((variant.price * qty) / 100, moneyFormat))
+          ? addWithPriceTemplate.replace("{{price}}", formatMoney((effectivePrice * qty) / 100, moneyFormat))
           : addToCartText;
       }
     }
@@ -356,6 +387,23 @@
 
     var byProductId = {};
     cards.forEach(function (card) {
+      if (card.dataset.slVariants && card.dataset.slOptions) {
+        try {
+          var variants = JSON.parse(card.dataset.slVariants);
+          var options = JSON.parse(card.dataset.slOptions);
+          for (var i = 0; i < variants.length; i++) {
+            var v = variants[i];
+            if ((!v.tiers || v.tiers.length === 0) && v.wsp !== null) {
+              v.tiers = [{ minQuantity: 1, price: v.wsp }];
+            }
+          }
+          injectInto(card, { options: options, variants: variants });
+          return;
+        } catch (e) {
+          console.error("Failed to parse variants/options dataset for card", e);
+        }
+      }
+
       var productId = extractProductId(card);
       if (!productId) return;
       byProductId[productId] = byProductId[productId] || [];

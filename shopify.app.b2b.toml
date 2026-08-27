@@ -71,5 +71,23 @@ description = "Public Storefront API access token, written by the app on install
   admin = "merchant_read"
   storefront = "public_read"
 
+[variant.metafields.sparklayer.wholesale_price]
+type = "number_decimal"
+name = "Wholesale Price"
+description = "B2B wholesale price pushed by SparkLayer price lists (priceListPush.server.ts); read directly by the storefront wholesale-pricing app block"
+
+  [variant.metafields.sparklayer.wholesale_price.access]
+  admin = "merchant_read"
+  storefront = "public_read"
+
+[variant.metafields.sparklayer.wholesale_price_tiers]
+type = "multi_line_text_field"
+name = "Wholesale Price Tiers"
+description = "JSON array of {minQuantity, price} quantity-break rows for this variant, pushed alongside wholesale_price by priceListPush.server.ts; read by the storefront to price a line by the quantity actually ordered"
+
+  [variant.metafields.sparklayer.wholesale_price_tiers.access]
+  admin = "merchant_read"
+  storefront = "public_read"
+
 [build]
 automatically_update_urls_on_dev = true

@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import { fetchVariantPricing } from "../services/variantPricing.server";
+import { fetchVariantPricing, pickTierPrice } from "../services/variantPricing.server";
 
 const DRAFT_ORDER_CREATE = `#graphql
   mutation DraftOrderCreate($input: DraftOrderInput!) {
@@ -154,11 +154,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           currencyCode: currency,
         };
 
-        if (
-          variantPricing.wholesalePrice != null &&
-          variantPricing.wholesalePrice < variantPricing.price
-        ) {
-          const discountPerUnit = Number((variantPricing.price - variantPricing.wholesalePrice).toFixed(2));
+        // Which quantity-break tier applies is decided by the quantity this
+        // line is actually ordering, not just the base "1+" price.
+        const tierPrice = pickTierPrice(variantPricing.tiers, item.quantity);
+
+        if (tierPrice != null && tierPrice < variantPricing.price) {
+          const discountPerUnit = Number((variantPricing.price - tierPrice).toFixed(2));
           if (discountPerUnit > 0) {
             line.appliedDiscount = {
               title: "Wholesale Discount",

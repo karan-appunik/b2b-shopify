@@ -50,7 +50,8 @@
               "wsp": {{ wsp | default: null | json }},
               "compareAtPrice": {{ variant.compare_at_price | default: null | json }},
               "nativePrice": {{ variant.price | json }},
-              "available": {{ variant.available | json }}
+              "available": {{ variant.available | json }},
+              "tiers": {{ variant.metafields.sparklayer.wholesale_price_tiers.value | default: "[]" }}
             }{% unless forloop.last %},{% endunless %}
           {% endfor %}
         ]

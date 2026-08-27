@@ -3,6 +3,7 @@ import { unauthenticated } from "../shopify.server";
 
 const WHOLESALE_PRICE_NAMESPACE = "sparklayer";
 const WHOLESALE_PRICE_KEY = "wholesale_price";
+const WHOLESALE_PRICE_TIERS_KEY = "wholesale_price_tiers";
 
 const METAFIELDS_SET = `#graphql
   mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -42,7 +43,11 @@ export interface PushPriceListInput {
   priceListName: string;
   currency: string;
   tag: string;
-  prices: Array<{ variantId: string; amount: string }>;
+  prices: Array<{
+    variantId: string;
+    amount: string;
+    tiers: Array<{ minQuantity: number; price: number }>;
+  }>;
   previousVariantIds?: string[];
   addCustomerIds: string[];
   removeCustomerIds: string[];
@@ -85,11 +90,10 @@ async function syncMetafields(
     for (const batch of chunk(removedVariantIds, 25)) {
       const deleteRes = await admin.graphql(METAFIELDS_DELETE, {
         variables: {
-          metafields: batch.map((ownerId) => ({
-            ownerId,
-            namespace: WHOLESALE_PRICE_NAMESPACE,
-            key: WHOLESALE_PRICE_KEY,
-          })),
+          metafields: batch.flatMap((ownerId) => [
+            { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_KEY },
+            { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_TIERS_KEY },
+          ]),
         },
       });
       const deleteBody = await deleteRes.json();
@@ -101,16 +105,30 @@ async function syncMetafields(
   }
 
   let updatedCount = 0;
-  for (const batch of chunk(input.prices, 25)) {
+  // Batch of 12 prices -> 24 metafield writes per call, staying under the
+  // same ~25-per-request budget the delete loop above uses.
+  for (const batch of chunk(input.prices, 12)) {
     const setRes = await admin.graphql(METAFIELDS_SET, {
       variables: {
-        metafields: batch.map((p) => ({
-          ownerId: p.variantId,
-          namespace: WHOLESALE_PRICE_NAMESPACE,
-          key: WHOLESALE_PRICE_KEY,
-          type: "number_decimal",
-          value: p.amount,
-        })),
+        metafields: batch.flatMap((p) => [
+          {
+            ownerId: p.variantId,
+            namespace: WHOLESALE_PRICE_NAMESPACE,
+            key: WHOLESALE_PRICE_KEY,
+            type: "number_decimal",
+            value: p.amount,
+          },
+          {
+            ownerId: p.variantId,
+            namespace: WHOLESALE_PRICE_NAMESPACE,
+            key: WHOLESALE_PRICE_TIERS_KEY,
+            // Plain text (not Shopify's "json" metafield type) so Liquid's
+            // `metafield.value` is always guaranteed to be the raw string —
+            // `| parse_json` in Liquid then decodes the tier list.
+            type: "multi_line_text_field",
+            value: JSON.stringify(p.tiers),
+          },
+        ]),
       },
     });
     const setBody = await setRes.json();

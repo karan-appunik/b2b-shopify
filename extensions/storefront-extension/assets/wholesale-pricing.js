@@ -12,9 +12,25 @@
       .replace(/\{\{\s*amount\s*\}\}/, value);
   }
 
+  // Picks the price for the highest tier whose minQuantity the given
+  // quantity still qualifies for (tiers must be sorted ascending).
+  function pickTierPrice(tiers, quantity) {
+    var applicable = null;
+    for (var i = 0; i < (tiers || []).length; i++) {
+      if (tiers[i].minQuantity <= quantity) {
+        applicable = tiers[i];
+      } else {
+        break;
+      }
+    }
+    return applicable ? applicable.price : null;
+  }
+
   function initInstance(root) {
     var moneyFormat = root.dataset.moneyFormat || "${{amount}}";
     var addToCartText = root.dataset.i18nAddToCart || "Add to cart";
+    var wspPrefix = root.dataset.i18nWspPrefix || "";
+    var msrpPrefix = root.dataset.i18nMsrp || "MSRP";
     var qtyInputs = root.querySelectorAll("[data-sl-qty-input]");
     var addButton = root.querySelector("[data-sl-add-to-cart]");
     var addLabel = root.querySelector("[data-sl-add-to-cart-label]");
@@ -22,10 +38,79 @@
 
     if (!addButton || !addLabel || qtyInputs.length === 0) return;
 
+    var tiersScript = root.querySelector("[data-sl-tiers]");
+    var tiersByVariant = {};
+    if (tiersScript) {
+      try {
+        tiersByVariant = JSON.parse(tiersScript.textContent) || {};
+      } catch (e) {
+        tiersByVariant = {};
+      }
+    }
+
+    var summaryVariantId = root.dataset.summaryVariantId;
+    var summaryEl = root.querySelector("[data-sl-summary]");
+
+    // Writes the WSP/MSRP price into a row (or the page-level summary,
+    // which mirrors whichever row is the "selected" variant) for the given
+    // tier price. Passing tierDollars === null means no tier qualifies yet,
+    // so it falls back to the real native/compare-at price instead of
+    // leaving a wholesale figure that quantity no longer actually gets.
+    function applyPriceDisplay(container, tierDollars, nativeCents, compareAtCents) {
+      if (!container) return;
+      var wspEl = container.querySelector(".sl-wsp-price-wsp");
+      var msrpEl = container.querySelector(".sl-wsp-price-msrp");
+
+      if (tierDollars != null) {
+        var tierCents = Math.round(tierDollars * 100);
+        if (wspEl) wspEl.textContent = wspPrefix + formatMoney(tierCents, moneyFormat);
+        if (msrpEl) {
+          msrpEl.textContent = msrpPrefix + ": " + formatMoney(nativeCents, moneyFormat);
+          msrpEl.style.display = "";
+        }
+        return tierCents;
+      }
+
+      if (wspEl) wspEl.textContent = formatMoney(nativeCents, moneyFormat);
+      if (msrpEl) {
+        if (compareAtCents > nativeCents) {
+          msrpEl.textContent = msrpPrefix + ": " + formatMoney(compareAtCents, moneyFormat);
+          msrpEl.style.display = "";
+        } else {
+          msrpEl.textContent = "";
+          msrpEl.style.display = "none";
+        }
+      }
+      return nativeCents;
+    }
+
+    // Re-derives each row's price (in cents) from its quantity-break
+    // schedule for the qty currently in its stepper, so the shown price
+    // (and the running total) always match what checkout will actually
+    // charge for that quantity — never just the "1+" price. Also mirrors
+    // the page-level summary line whenever this row is the selected variant.
+    function updateRowPrice(input) {
+      var variantId = input.dataset.variantId;
+      var tiers = tiersByVariant[variantId];
+      var qty = Math.max(1, Number(input.value) || 1);
+      var tierDollars = tiers && tiers.length ? pickTierPrice(tiers, qty) : null;
+      var nativeCents = Number(input.dataset.nativePrice) || 0;
+      var compareAtCents = Number(input.dataset.compareAtPrice) || 0;
+
+      var row = input.closest("tr");
+      var effectiveCents = applyPriceDisplay(row, tierDollars, nativeCents, compareAtCents);
+      input.dataset.variantPrice = String(effectiveCents);
+
+      if (summaryEl && variantId === summaryVariantId) {
+        applyPriceDisplay(summaryEl, tierDollars, nativeCents, compareAtCents);
+      }
+    }
+
     function updateTotal() {
       var totalCents = 0;
       var totalQty = 0;
       qtyInputs.forEach(function (input) {
+        updateRowPrice(input);
         var qty = Number(input.value) || 0;
         var priceCents = Number(input.dataset.variantPrice) || 0;
         totalCents += qty * priceCents;

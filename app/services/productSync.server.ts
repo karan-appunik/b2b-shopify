@@ -11,6 +11,10 @@ const PRODUCTS_QUERY = `#graphql
         node {
           id
           title
+          handle
+          featuredImage {
+            url
+          }
           variants(first: 100) {
             edges {
               node {
@@ -18,6 +22,10 @@ const PRODUCTS_QUERY = `#graphql
                 sku
                 price
                 title
+                selectedOptions {
+                  name
+                  value
+                }
               }
             }
           }
@@ -33,6 +41,11 @@ type ProductRow = {
   msrp: number;
   shopifyProductId: string;
   shopifyVariantId: string;
+  productTitle: string;
+  productHandle: string;
+  variantTitle: string;
+  image: string | null;
+  options: Array<{ name: string; value: string }>;
 };
 
 interface ProductsQueryResponse {
@@ -43,9 +56,17 @@ interface ProductsQueryResponse {
         node: {
           id: string;
           title: string;
+          handle: string;
+          featuredImage: { url: string } | null;
           variants: {
             edges: Array<{
-              node: { id: string; sku: string | null; price: string; title: string };
+              node: {
+                id: string;
+                sku: string | null;
+                price: string;
+                title: string;
+                selectedOptions: Array<{ name: string; value: string }>;
+              };
             }>;
           };
         };
@@ -57,11 +78,17 @@ interface ProductsQueryResponse {
 export interface ShopifyProductWebhookPayload {
   id: number | string;
   title: string;
+  handle?: string;
+  image?: { src: string } | null;
+  options?: Array<{ name: string; position: number }>;
   variants?: Array<{
     id: number | string;
     sku: string | null;
     price: string;
     title: string;
+    option1?: string | null;
+    option2?: string | null;
+    option3?: string | null;
   }>;
 }
 
@@ -90,6 +117,11 @@ async function fetchAllProductRows(admin: AdminApiContext): Promise<ProductRow[]
           msrp: Number(variant.price),
           shopifyProductId: product.id,
           shopifyVariantId: variant.id,
+          productTitle: product.title,
+          productHandle: product.handle,
+          variantTitle: variant.title,
+          image: product.featuredImage?.url || null,
+          options: variant.selectedOptions || [],
         });
       }
     }
@@ -193,15 +225,31 @@ export async function syncProductFromWebhookPayload(
   shop: string,
   payload: ShopifyProductWebhookPayload,
 ): Promise<void> {
+  const optionDefs = [...(payload.options || [])].sort((a, b) => a.position - b.position);
+
   const rows: ProductRow[] = (payload.variants || [])
     .filter((variant) => variant.sku)
-    .map((variant) => ({
-      sku: variant.sku as string,
-      name: variantName(payload.title, variant.title),
-      msrp: Number(variant.price),
-      shopifyProductId: String(payload.id),
-      shopifyVariantId: String(variant.id),
-    }));
+    .map((variant) => {
+      const optionValues = [variant.option1, variant.option2, variant.option3].filter(
+        (v): v is string => Boolean(v),
+      );
+      const options = optionDefs
+        .slice(0, optionValues.length)
+        .map((def, idx) => ({ name: def.name, value: optionValues[idx] }));
+
+      return {
+        sku: variant.sku as string,
+        name: variantName(payload.title, variant.title),
+        msrp: Number(variant.price),
+        shopifyProductId: String(payload.id),
+        shopifyVariantId: String(variant.id),
+        productTitle: payload.title,
+        productHandle: payload.handle || "",
+        variantTitle: variant.title,
+        image: payload.image?.src || null,
+        options,
+      };
+    });
 
   try {
     await syncProductRows(rows, shop);

@@ -21,10 +21,27 @@
     data-money-format="{{ shop.money_format | strip_html }}"
     data-currency="{{ cart.currency.iso_code }}"
     data-i18n-add-to-cart="{{ 'wholesalePricing.addToCart' | t }}"
+    data-i18n-wsp-prefix="{{ 'wholesalePricing.wspPrefix' | t }}"
+    data-i18n-msrp="{{ 'wholesalePricing.msrp' | t }}"
+    data-summary-variant-id="{{ sl_product.selected_or_first_available_variant.id }}"
     {{ block.shopify_attributes }}
   >
     <img class="sl-wsp-preview-float" data-sl-preview alt="" aria-hidden="true" width="120" height="120">
     {% if customer.b2b? %}
+      {% comment %}
+        Per-variant quantity-break schedule, keyed by variant id — lets the
+        JS recompute the shown price as the buyer changes the qty stepper,
+        instead of only ever showing the "1+" price. Each value is already a
+        JSON array (written verbatim by priceListPush.server.ts), so it's
+        interpolated as-is rather than re-encoded with `| json`.
+      {% endcomment %}
+      <script type="application/json" data-sl-tiers>
+        {
+          {% for variant in sl_product.variants %}
+            "{{ variant.id }}": {{ variant.metafields.sparklayer.wholesale_price_tiers.value | default: "[]" }}{% unless forloop.last %},{% endunless %}
+          {% endfor %}
+        }
+      </script>
       {% comment %}
         Always render the table layout, even for single-variant products
         (one row) — matches the reference design where a 1-variant product
@@ -34,7 +51,14 @@
         assign summary_variant = sl_product.selected_or_first_available_variant
         assign summary_wsp = summary_variant.metafields.sparklayer.wholesale_price.value
       %}
-      <div class="sl-wsp-summary">
+      {% comment %}
+        JS keeps this in sync with the matching table row (by
+        data-summary-variant-id above) once tiers are known — the markup
+        below is only what's shown before JS runs / with JS disabled, so it
+        deliberately mirrors the table's own "no wsp" fallback rather than
+        assuming the 1+ tier's price still applies.
+      {% endcomment %}
+      <div class="sl-wsp-summary" data-sl-summary>
         {% if summary_wsp %}
           <span class="sl-wsp-price-wsp">{{ 'wholesalePricing.wspPrefix' | t }}{{ summary_wsp | times: 100 | money }}</span>
           <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ summary_variant.price | money }}</span>
@@ -131,6 +155,8 @@
                           data-sl-qty-input
                           data-variant-id="{{ variant.id }}"
                           data-variant-price="{{ row_price_cents }}"
+                          data-native-price="{{ variant.price }}"
+                          data-compare-at-price="{{ variant.compare_at_price | default: 0 }}"
                           aria-label="{{ 'wholesalePricing.quantity' | t }}: {{ variant.title | escape }}"
                         >
                         <button
