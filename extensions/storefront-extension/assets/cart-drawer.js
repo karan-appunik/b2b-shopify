@@ -103,6 +103,15 @@
   var proxyUrl = root.dataset.proxyUrl;
   var addressProxyUrl = root.dataset.addressProxyUrl;
   var checkoutProxyUrl = root.dataset.checkoutProxyUrl;
+  var validateCouponProxyUrl = root.dataset.validateCouponProxyUrl;
+  // Derived from validateCouponProxyUrl (same "/apps/sparklayer/..." proxy
+  // base, just a different path segment) rather than relying solely on the
+  // theme block having redeployed with a new data-coupon-availability-proxy-url
+  // attribute — the JS asset and the liquid block that renders its data-*
+  // attributes can land on the storefront at different times, so this keeps
+  // the feature working the moment cart-drawer.js itself updates.
+  var couponAvailabilityProxyUrl = root.dataset.couponAvailabilityProxyUrl ||
+    (validateCouponProxyUrl ? validateCouponProxyUrl.replace(/\/validate-coupon$/, "/coupon-availability") : undefined);
   var paymentTermsProxyUrl = root.dataset.paymentTermsProxyUrl;
   var creditInfoProxyUrl = root.dataset.creditInfoProxyUrl;
   var orderDetailProxyUrl = root.dataset.orderDetailProxyUrl;
@@ -252,6 +261,14 @@
   var accountAddAddressError = "";
   var accountAddAddressSaving = false;
   var checkoutError = "";
+  var appliedCouponCodes = [];
+  var MAX_COUPON_CODES = 3;
+  var couponError = "";
+  var couponValidating = false;
+  // docs.sparklayer.io/discounts: "The coupon code box will only show for
+  // your customers if there is an 'active' discount code that is 'enabled'"
+  // — starts hidden until fetchCouponAvailability confirms one exists.
+  var hasActiveCoupons = false;
   var selectedPaymentMethod = "pay_now";
   var eligiblePaymentTerms = [];
   var netTermsDueInDays = 30;
@@ -782,7 +799,30 @@
       return "";
     }
     if (currentStep === 0) {
+      // Up to MAX_COUPON_CODES codes stack per order (docs.sparklayer.io/discounts)
+      // — once the cap is hit the input hides and only Remove stays available.
+      // Also hidden entirely when no active coupon discount exists at all
+      // (docs.sparklayer.io/discounts "the coupon code box will only show
+      // ... if there is an 'active' discount code that is 'enabled'").
+      var couponInputHtml = hasActiveCoupons && appliedCouponCodes.length < MAX_COUPON_CODES
+        ? '<div class="sl-cart-coupon">' +
+            '<input type="text" class="sl-cart-coupon-input" data-sl-coupon-input placeholder="Coupon code"' + (couponValidating ? " disabled" : "") + '>' +
+            '<button type="button" class="sl-cart-coupon-apply" data-sl-coupon-apply' + (couponValidating ? " disabled" : "") + '>' + (couponValidating ? "Applying…" : "Apply") + "</button>" +
+          "</div>"
+        : "";
+      var couponErrorHtml = couponError
+        ? '<p class="sl-cart-form-error">' + escapeHtml(couponError) + "</p>"
+        : "";
+      var couponAppliedHtml = appliedCouponCodes.map(function (code) {
+        return (
+          '<p class="sl-cart-coupon-applied">Code "' + escapeHtml(code) + '" will be applied at checkout ' +
+            '<button type="button" class="sl-cart-coupon-remove" data-sl-coupon-remove data-code="' + escapeHtml(code) + '">Remove</button></p>'
+        );
+      }).join("");
       return (
+        couponInputHtml +
+        couponErrorHtml +
+        couponAppliedHtml +
         '<div class="sl-cart-subtotal">' +
           "<span>" + escapeHtml(i18n.subtotal) + ' <span class="sl-cart-subtotal-count"></span></span>' +
           '<span class="sl-cart-subtotal-amount"></span>' +
@@ -886,9 +926,9 @@
     if (options.forList) params.push("list=1");
     if (options.year) params.push("year=" + encodeURIComponent(options.year));
     var url = ordersProxyUrl + (params.length ? (ordersProxyUrl.indexOf("?") === -1 ? "?" : "&") + params.join("&") : "");
-    return fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
+    return safeFetchJson(url)
+      .then(function (result) {
+        var body = result.body || {};
         accountOrders = body.orders || [];
         accountOrderCounts = body.counts || null;
         if (options.forList) {
@@ -913,9 +953,9 @@
     if (customerId) {
       url += "&logged_in_customer_id=" + encodeURIComponent(customerId);
     }
-    return fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
+    return safeFetchJson(url)
+      .then(function (result) {
+        var body = result.body || {};
         if (body.order) {
           orderDetail = body.order;
           orderDetailError = "";
@@ -1027,19 +1067,32 @@
     if (customerId) {
       url += (url.indexOf("?") === -1 ? "?" : "&") + "logged_in_customer_id=" + encodeURIComponent(customerId);
     }
-    return fetch(url, {
+    return safeFetchJson(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(values),
     })
-      .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
       .then(function (result) {
-        if (!result.ok || !result.body.address) {
+        if (!result.ok || !result.body || !result.body.address) {
           throw new Error((result.body && result.body.error) || i18n.addressSaveError);
         }
         addresses.push(result.body.address);
         selectedAddressId = result.body.address.id;
       });
+  }
+
+  function safeFetchJson(url, options) {
+    return fetch(url, options).then(function (res) {
+      return res.text().then(function (text) {
+        var body = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch (e) {
+          body = null;
+        }
+        return { ok: res.ok, status: res.status, body: body, rawText: text };
+      });
+    });
   }
 
   function saveAccountAddress(values) {
@@ -1057,9 +1110,9 @@
       url += (url.indexOf("?") === -1 ? "?" : "&") + "logged_in_customer_id=" + encodeURIComponent(customerId);
     }
     console.log("[SparkLayer] Fetching payment terms from url:", url, "for customerId:", customerId);
-    fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
+    safeFetchJson(url)
+      .then(function (result) {
+        var body = result.body || {};
         console.log("[SparkLayer] Received payment terms response:", body);
         eligiblePaymentTerms = body.eligibleTerms || [];
         if (body.netTermsDueInDays) netTermsDueInDays = body.netTermsDueInDays;
@@ -1071,12 +1124,36 @@
       });
   }
 
+  // Checked the moment the buyer clicks Apply, rather than only surfacing an
+  // invalid/used-up code later when the full checkout runs its own copy of
+  // this same eligibility logic.
+  function validateCouponCode(code) {
+    if (!validateCouponProxyUrl) return Promise.resolve({ valid: true });
+    var url = validateCouponProxyUrl;
+    if (customerId) {
+      url += (url.indexOf("?") === -1 ? "?" : "&") + "logged_in_customer_id=" + encodeURIComponent(customerId);
+    }
+    return safeFetchJson(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        couponCode: code,
+        currency: cartData.currency || "USD",
+        lineItems: (cartData.items || []).map(function (item) {
+          return { variantId: item.variant_id, quantity: item.quantity };
+        }),
+      }),
+    }).then(function (result) {
+      return result.body || { valid: false, error: "Could not validate coupon code." };
+    });
+  }
+
   function fetchCreditInfo() {
     if (!creditInfoProxyUrl || !customerId) return;
     var url = creditInfoProxyUrl + "?logged_in_customer_id=" + encodeURIComponent(customerId);
-    fetch(url)
-      .then(function (res) { return res.json(); })
-      .then(function (body) {
+    safeFetchJson(url)
+      .then(function (result) {
+        var body = result.body || {};
         customerCreditLimit = typeof body.creditLimit === "number" ? body.creditLimit : null;
         customerCreditBalance = typeof body.balance === "number" ? body.balance : 0;
         customerOnAccountEnabled = !!body.onAccountEnabled;
@@ -1092,6 +1169,18 @@
       });
   }
 
+  function fetchCouponAvailability() {
+    if (!couponAvailabilityProxyUrl) return;
+    safeFetchJson(couponAvailabilityProxyUrl)
+      .then(function (result) {
+        hasActiveCoupons = !!(result.body && result.body.hasCoupons);
+        if (currentStep === 0) footerEl.innerHTML = renderFooterHtml();
+      })
+      .catch(function () {
+        hasActiveCoupons = false;
+      });
+  }
+
   function openDrawer() {
     root.classList.add("is-open");
     document.body.style.overflow = "hidden";
@@ -1099,6 +1188,7 @@
     refreshCart();
     fetchPaymentTerms();
     fetchCreditInfo();
+    fetchCouponAvailability();
   }
 
   function closeDrawer() {
@@ -1427,7 +1517,7 @@
       if (customerId) {
         url += (url.indexOf("?") === -1 ? "?" : "&") + "logged_in_customer_id=" + encodeURIComponent(customerId);
       }
-      return fetch(url, {
+      return safeFetchJson(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1435,6 +1525,7 @@
           shippingAddress: buildShippingAddressPayload(),
           paymentMethod: selectedPaymentMethod,
           currency: cartData.currency || "USD",
+          couponCodes: appliedCouponCodes.length ? appliedCouponCodes : undefined,
           lineItems: (cartData.items || []).map(function (item) {
             // item.price is the pre-discount unit price in Shopify's cart.js;
             // final_price is the unit price after automatic/segment discounts
@@ -1449,10 +1540,13 @@
           }),
         }),
       })
-        .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
         .then(function (result) {
-          if (!result.ok || (!result.body.invoiceUrl && !result.body.order)) {
-            throw new Error((result.body && result.body.error) || i18n.checkoutError);
+          if (!result.ok || !result.body || (!result.body.invoiceUrl && !result.body.order)) {
+            var errMsg = (result.body && result.body.error) ||
+              (result.status === 404 || result.status === 502 || result.status === 503
+                ? "Checkout service is currently unavailable. Please verify that the backend server is running."
+                : i18n.checkoutError);
+            throw new Error(errMsg);
           }
           if (result.body.order) {
             orderConfirmation = result.body.order;
@@ -1547,6 +1641,53 @@
     if (checkoutBtn) {
       event.preventDefault();
       setStep(1);
+      return;
+    }
+
+    var couponApplyBtn = event.target.closest("[data-sl-coupon-apply]");
+    if (couponApplyBtn) {
+      event.preventDefault();
+      if (couponValidating) return;
+      var couponInputEl = footerEl.querySelector("[data-sl-coupon-input]");
+      var newCouponCode = couponInputEl ? couponInputEl.value.trim() : "";
+      var alreadyApplied = appliedCouponCodes.some(function (code) {
+        return code.toUpperCase() === newCouponCode.toUpperCase();
+      });
+      if (!newCouponCode || alreadyApplied || appliedCouponCodes.length >= MAX_COUPON_CODES) {
+        return;
+      }
+      couponError = "";
+      couponValidating = true;
+      footerEl.innerHTML = renderFooterHtml();
+      validateCouponCode(newCouponCode)
+        .then(function (result) {
+          couponValidating = false;
+          if (result && result.valid) {
+            appliedCouponCodes.push(newCouponCode);
+          } else {
+            couponError = (result && result.error) || "This coupon code is invalid.";
+          }
+          footerEl.innerHTML = renderFooterHtml();
+          renderCartLines();
+        })
+        .catch(function () {
+          couponValidating = false;
+          couponError = "Could not validate coupon code. Please try again.";
+          footerEl.innerHTML = renderFooterHtml();
+        });
+      return;
+    }
+
+    var couponRemoveBtn = event.target.closest("[data-sl-coupon-remove]");
+    if (couponRemoveBtn) {
+      event.preventDefault();
+      var codeToRemove = couponRemoveBtn.dataset.code || "";
+      appliedCouponCodes = appliedCouponCodes.filter(function (code) {
+        return code !== codeToRemove;
+      });
+      couponError = "";
+      footerEl.innerHTML = renderFooterHtml();
+      renderCartLines();
       return;
     }
 

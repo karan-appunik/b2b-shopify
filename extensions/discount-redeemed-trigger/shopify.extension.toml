@@ -1,0 +1,8 @@
+api_version = "2025-01"
+
+name = "SparkLayer: Discount Redeemed"
+description = "Fires whenever a SparkLayer discount is redeemed on a paid order."
+type = "flow_trigger"
+handle = "discount-redeemed"
+schema = "./schema.json"
+uid = "a48552dc-df4d-cc48-b684-3eb9aa9560114034d22c"

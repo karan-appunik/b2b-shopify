@@ -205,6 +205,8 @@ export interface ShopifyOrderWebhookPayload {
     last_name?: string | null;
     email?: string | null;
   } | null;
+  note_attributes?: { name: string; value: string }[] | null;
+  discount_codes?: { code: string; amount: string; type: string }[] | null;
 }
 
 export async function syncOrderFromWebhookPayload(
