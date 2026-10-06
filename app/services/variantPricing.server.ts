@@ -8,8 +8,13 @@ const VARIANT_PRICING_QUERY = `#graphql
       ... on ProductVariant {
         id
         price
+        sku
         metafield(namespace: $namespace, key: $key) { value }
         tiersMetafield: metafield(namespace: $namespace, key: $tiersKey) { value }
+        product {
+          tags
+          vendor
+        }
       }
     }
   }
@@ -24,6 +29,10 @@ export interface VariantPricing {
   price: number;
   wholesalePrice: number | null;
   tiers: PriceTier[];
+  // For "Advanced Requirements" (SKU/tag/vendor) discount matching.
+  sku: string | null;
+  tags: string[];
+  vendor: string | null;
 }
 
 function parseTiers(rawTiers: string | null | undefined, fallbackBasePrice: number | null): PriceTier[] {
@@ -94,6 +103,9 @@ export async function fetchVariantPricing(
       price: Number(node.price),
       wholesalePrice: basePrice,
       tiers,
+      sku: node.sku || null,
+      tags: Array.isArray(node.product?.tags) ? node.product.tags : [],
+      vendor: node.product?.vendor || null,
     });
   }
 

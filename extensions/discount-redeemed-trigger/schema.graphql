@@ -1,0 +1,22 @@
+type Customer {
+  id: ID!
+  email: String
+  firstName: String
+  lastName: String
+}
+
+type Order {
+  id: ID!
+  name: String
+}
+
+type Query {
+  customer: Customer
+  order: Order
+  discount_codes: String
+  discount_names: String
+  amount_saved: Float
+  currency: String
+  company_name: String
+  redeemed_at: String
+}
