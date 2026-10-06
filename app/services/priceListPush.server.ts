@@ -88,7 +88,7 @@ async function getAdminForShop(shop?: string) {
 }
 
 async function syncMetafields(
-  admin: Awaited<ReturnType<typeof getAdminForFirstShop>>,
+  admin: Awaited<ReturnType<typeof getAdminForShop>>,
   input: PushPriceListInput,
 ): Promise<{ updatedCount: number; error?: string }> {
   const currentVariantIds = new Set(input.prices.map((p) => p.variantId));
