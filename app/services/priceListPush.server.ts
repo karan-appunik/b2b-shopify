@@ -40,6 +40,7 @@ const TAGS_REMOVE = `#graphql
 `;
 
 export interface PushPriceListInput {
+  shop?: string;
   priceListName: string;
   currency: string;
   tag: string;
@@ -68,8 +69,17 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-async function getAdminForFirstShop() {
-  const session = await prisma.session.findFirst({ orderBy: { expires: "desc" } });
+async function getAdminForShop(shop?: string) {
+  let session = null;
+  if (shop) {
+    session = await prisma.session.findFirst({
+      where: { shop },
+      orderBy: { expires: "desc" },
+    });
+  }
+  if (!session) {
+    session = await prisma.session.findFirst({ orderBy: { expires: "desc" } });
+  }
   if (!session) {
     throw new Error("No Shopify session found — open the admin app at least once first");
   }
@@ -90,10 +100,13 @@ async function syncMetafields(
     for (const batch of chunk(removedVariantIds, 25)) {
       const deleteRes = await admin.graphql(METAFIELDS_DELETE, {
         variables: {
-          metafields: batch.flatMap((ownerId) => [
-            { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_KEY },
-            { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_TIERS_KEY },
-          ]),
+          metafields: batch.flatMap((id) => {
+            const ownerId = id.startsWith("gid://shopify/ProductVariant/") ? id : `gid://shopify/ProductVariant/${id}`;
+            return [
+              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_KEY },
+              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_TIERS_KEY },
+            ];
+          }),
         },
       });
       const deleteBody = await deleteRes.json();
@@ -110,25 +123,30 @@ async function syncMetafields(
   for (const batch of chunk(input.prices, 12)) {
     const setRes = await admin.graphql(METAFIELDS_SET, {
       variables: {
-        metafields: batch.flatMap((p) => [
-          {
-            ownerId: p.variantId,
-            namespace: WHOLESALE_PRICE_NAMESPACE,
-            key: WHOLESALE_PRICE_KEY,
-            type: "number_decimal",
-            value: p.amount,
-          },
-          {
-            ownerId: p.variantId,
-            namespace: WHOLESALE_PRICE_NAMESPACE,
-            key: WHOLESALE_PRICE_TIERS_KEY,
-            // Plain text (not Shopify's "json" metafield type) so Liquid's
-            // `metafield.value` is always guaranteed to be the raw string —
-            // `| parse_json` in Liquid then decodes the tier list.
-            type: "multi_line_text_field",
-            value: JSON.stringify(p.tiers),
-          },
-        ]),
+        metafields: batch.flatMap((p) => {
+          const ownerId = p.variantId.startsWith("gid://shopify/ProductVariant/")
+            ? p.variantId
+            : `gid://shopify/ProductVariant/${p.variantId}`;
+          return [
+            {
+              ownerId,
+              namespace: WHOLESALE_PRICE_NAMESPACE,
+              key: WHOLESALE_PRICE_KEY,
+              type: "number_decimal",
+              value: p.amount,
+            },
+            {
+              ownerId,
+              namespace: WHOLESALE_PRICE_NAMESPACE,
+              key: WHOLESALE_PRICE_TIERS_KEY,
+              // Plain text (not Shopify's "json" metafield type) so Liquid's
+              // `metafield.value` is always guaranteed to be the raw string —
+              // `| parse_json` in Liquid then decodes the tier list.
+              type: "multi_line_text_field",
+              value: JSON.stringify(p.tiers),
+            },
+          ];
+        }),
       },
     });
     const setBody = await setRes.json();
@@ -143,7 +161,7 @@ async function syncMetafields(
 }
 
 async function syncCustomerTags(
-  admin: Awaited<ReturnType<typeof getAdminForFirstShop>>,
+  admin: Awaited<ReturnType<typeof getAdminForShop>>,
   tag: string,
   addCustomerIds: string[],
   removeCustomerIds: string[],
@@ -180,7 +198,7 @@ export async function pushPriceListToShopify(
     return { error: "Price list has no priced products" };
   }
 
-  const admin = await getAdminForFirstShop();
+  const admin = await getAdminForShop(input.shop);
 
   try {
     const metafieldResult = await syncMetafields(admin, input);

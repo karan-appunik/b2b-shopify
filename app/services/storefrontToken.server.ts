@@ -4,15 +4,21 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 // metafield (storefront: public_read) so the wholesale-pricing-embed script
 // can read it straight from Liquid (`shop.metafields.sparklayer.storefront_token`)
 // without any authenticated backend round-trip at page-render time.
+//
+// There's no Admin GraphQL query to list a shop's existing storefront access
+// tokens (only storefrontAccessTokenCreate exists — querying
+// `storefrontAccessTokens` throws "doesn't exist on type 'QueryRoot'"), so
+// the only reliable way to check for one we already made is to read back
+// our own metafield rather than asking Shopify for the token list.
 
 const TOKEN_TITLE = "SparkLayer Wholesale Pricing Embed";
 
-const EXISTING_TOKENS_QUERY = `#graphql
-  query ExistingStorefrontAccessTokens {
-    storefrontAccessTokens(first: 10) {
-      nodes {
-        accessToken
-        title
+const SHOP_TOKEN_METAFIELD_QUERY = `#graphql
+  query ShopStorefrontTokenMetafield {
+    shop {
+      id
+      metafield(namespace: "sparklayer", key: "storefront_token") {
+        value
       }
     }
   }
@@ -33,14 +39,6 @@ const CREATE_TOKEN_MUTATION = `#graphql
   }
 `;
 
-const SHOP_ID_QUERY = `#graphql
-  query ShopId {
-    shop {
-      id
-    }
-  }
-`;
-
 const SET_METAFIELD_MUTATION = `#graphql
   mutation SetStorefrontTokenMetafield($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
@@ -52,54 +50,70 @@ const SET_METAFIELD_MUTATION = `#graphql
   }
 `;
 
-export async function ensureStorefrontAccessToken(admin: AdminApiContext) {
+async function createAndStoreToken(admin: AdminApiContext, shopId: string): Promise<string | undefined> {
+  const createRes = await admin.graphql(CREATE_TOKEN_MUTATION, {
+    variables: { input: { title: TOKEN_TITLE } },
+  });
+  const createBody = await createRes.json();
+  const errors = createBody.data?.storefrontAccessTokenCreate?.userErrors;
+  if (errors?.length) {
+    console.error("storefrontAccessTokenCreate errors:", errors);
+    return undefined;
+  }
+
+  const accessToken = createBody.data?.storefrontAccessTokenCreate?.storefrontAccessToken?.accessToken;
+  if (!accessToken) return undefined;
+
+  const setRes = await admin.graphql(SET_METAFIELD_MUTATION, {
+    variables: {
+      metafields: [
+        {
+          ownerId: shopId,
+          namespace: "sparklayer",
+          key: "storefront_token",
+          type: "single_line_text_field",
+          value: accessToken,
+        },
+      ],
+    },
+  });
+  const setBody = await setRes.json();
+  const setErrors = setBody.data?.metafieldsSet?.userErrors;
+  if (setErrors?.length) {
+    console.error("metafieldsSet (storefront_token) errors:", setErrors);
+  }
+
+  return accessToken;
+}
+
+// Reads the token from our own shop metafield, creating and storing one on
+// the spot if this shop doesn't have one yet (e.g. the afterAuth hook ran
+// before this metafield existed).
+export async function getStorefrontAccessToken(admin: AdminApiContext): Promise<string | undefined> {
   try {
-    const existingRes = await admin.graphql(EXISTING_TOKENS_QUERY);
-    const existingBody = await existingRes.json();
-    const existing = (existingBody.data?.storefrontAccessTokens?.nodes || []).find(
-      (t: { title: string }) => t.title === TOKEN_TITLE
-    );
-
-    let accessToken: string | undefined = existing?.accessToken;
-
-    if (!accessToken) {
-      const createRes = await admin.graphql(CREATE_TOKEN_MUTATION, {
-        variables: { input: { title: TOKEN_TITLE } },
-      });
-      const createBody = await createRes.json();
-      const errors = createBody.data?.storefrontAccessTokenCreate?.userErrors;
-      if (errors?.length) {
-        console.error("storefrontAccessTokenCreate errors:", errors);
-        return;
-      }
-      accessToken = createBody.data?.storefrontAccessTokenCreate?.storefrontAccessToken?.accessToken;
-    }
-
-    if (!accessToken) return;
-
-    const shopRes = await admin.graphql(SHOP_ID_QUERY);
+    const shopRes = await admin.graphql(SHOP_TOKEN_METAFIELD_QUERY);
     const shopBody = await shopRes.json();
     const shopId = shopBody.data?.shop?.id;
-    if (!shopId) return;
+    const existingValue = shopBody.data?.shop?.metafield?.value;
+    if (existingValue) return existingValue;
+    if (!shopId) return undefined;
 
-    const setRes = await admin.graphql(SET_METAFIELD_MUTATION, {
-      variables: {
-        metafields: [
-          {
-            ownerId: shopId,
-            namespace: "sparklayer",
-            key: "storefront_token",
-            type: "single_line_text_field",
-            value: accessToken,
-          },
-        ],
-      },
-    });
-    const setBody = await setRes.json();
-    const setErrors = setBody.data?.metafieldsSet?.userErrors;
-    if (setErrors?.length) {
-      console.error("metafieldsSet (storefront_token) errors:", setErrors);
-    }
+    return await createAndStoreToken(admin, shopId);
+  } catch (error) {
+    console.error("getStorefrontAccessToken failed:", error);
+    return undefined;
+  }
+}
+
+export async function ensureStorefrontAccessToken(admin: AdminApiContext) {
+  try {
+    const shopRes = await admin.graphql(SHOP_TOKEN_METAFIELD_QUERY);
+    const shopBody = await shopRes.json();
+    const shopId = shopBody.data?.shop?.id;
+    const existingValue = shopBody.data?.shop?.metafield?.value;
+    if (existingValue || !shopId) return;
+
+    await createAndStoreToken(admin, shopId);
   } catch (error) {
     console.error("ensureStorefrontAccessToken failed:", error);
   }
