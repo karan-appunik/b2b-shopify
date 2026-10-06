@@ -13,6 +13,7 @@ api_version = "unstable"
 handle = "dummy-event"
 topic = "Product"
 actions = ["update"]
+triggers = ["product.*"]
 uri = "/webhooks/products/update"
 
 [webhooks]

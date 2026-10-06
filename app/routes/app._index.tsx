@@ -7,6 +7,26 @@ import { syncCustomersToBackend } from "../services/customerSync.server";
 import { syncOrdersToBackend } from "../services/orderSync.server";
 import { ensurePaymentOnAccountMetafieldDefinition } from "../services/customerCreditMetafield.server";
 
+// Mirrors how the real SparkLayer app auto-logs the store owner into its own
+// dashboard from Shopify admin — no separate merchant-panel email/password.
+// protectInternal on the backend trusts this because it's a server-to-server
+// call carrying BACKEND_INTERNAL_API_KEY, never exposed to the browser.
+async function getMerchantPanelSsoToken(shop: string): Promise<string | null> {
+  const backendUrl = process.env.BACKEND_API_URL;
+  const internalKey = process.env.BACKEND_INTERNAL_API_KEY;
+  if (!backendUrl || !internalKey) return null;
+
+  const res = await fetch(`${backendUrl.replace(/\/$/, "")}/api/internal/auth/sso`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-internal-api-key": internalKey },
+    body: JSON.stringify({ shop }),
+  });
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  return data.token ?? null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
 
@@ -22,21 +42,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   await syncOrdersToBackend(admin, session.shop);
 
   const merchantPanelUrl = process.env.MERCHANT_PANEL_URL || "";
+  const ssoToken = merchantPanelUrl ? await getMerchantPanelSsoToken(session.shop) : null;
+  const merchantPanelOpenUrl =
+    merchantPanelUrl && ssoToken
+      ? `${merchantPanelUrl.replace(/\/$/, "")}/sso?token=${encodeURIComponent(ssoToken)}`
+      : merchantPanelUrl;
 
-  return { merchantPanelUrl };
+  return { merchantPanelUrl, merchantPanelOpenUrl };
 };
 
 export default function Index() {
-  const { merchantPanelUrl } = useLoaderData<typeof loader>();
+  const { merchantPanelUrl, merchantPanelOpenUrl } = useLoaderData<typeof loader>();
 
   return (
     <s-page heading="Admin Frontend — Setup Verification">
       <s-section heading="Merchant Panel">
         <s-paragraph>
-          Open the merchant-facing panel in a new tab.
+          Open the merchant-facing panel in a new tab — you'll be signed in automatically.
         </s-paragraph>
         <s-button
-          href={merchantPanelUrl}
+          href={merchantPanelOpenUrl}
           target="_blank"
           variant="primary"
           disabled={!merchantPanelUrl}
