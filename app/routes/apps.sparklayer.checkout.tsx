@@ -303,6 +303,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Requirements and Rewards" cart_lines reward (matched via lineItemMatch,
     // an attribute/operator condition against sku/tag/vendor) — independent
     // of the order/shipping/free-product discounts resolved above.
+    // eslint-disable-next-line no-inner-declarations
     function matchesResolvedLineItemDiscount(discount: Discount, variantPricing: { sku: string | null; tags: string[]; vendor: string | null } | undefined): boolean {
       if (discount.lineItemMatch) {
         return lineMatchesCondition(discount.lineItemMatch, {

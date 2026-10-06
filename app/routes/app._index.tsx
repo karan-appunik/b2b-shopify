@@ -58,7 +58,7 @@ export default function Index() {
     <s-page heading="Admin Frontend — Setup Verification">
       <s-section heading="Merchant Panel">
         <s-paragraph>
-          Open the merchant-facing panel in a new tab — you'll be signed in automatically.
+          Open the merchant-facing panel in a new tab — you&apos;ll be signed in automatically.
         </s-paragraph>
         <s-button
           href={merchantPanelOpenUrl}

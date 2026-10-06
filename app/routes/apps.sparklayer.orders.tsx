@@ -80,7 +80,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // The full order-history view lets shoppers filter by year, so we also
     // need the range of years they actually have orders in for the dropdown.
-    let years: number[] = [];
+    const years: number[] = [];
     let year = yearParam && /^\d{4}$/.test(yearParam) ? parseInt(yearParam, 10) : undefined;
     if (wantYears) {
       const oldestResponse = await admin.graphql(OLDEST_ORDER_QUERY, { variables: { customerId } });
