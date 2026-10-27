@@ -1,9 +1,13 @@
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
-
-const WHOLESALE_PRICE_NAMESPACE = "sparklayer";
-const WHOLESALE_PRICE_KEY = "wholesale_price";
-const WHOLESALE_PRICE_TIERS_KEY = "wholesale_price_tiers";
+import {
+  WHOLESALE_PRICE_NAMESPACE,
+  LEGACY_PRICE_KEY,
+  LEGACY_TIERS_KEY,
+  SHOP_CURRENCY_QUERY,
+  currencyKeys,
+  sameCurrency,
+} from "./wholesaleMetafields.server";
 
 const METAFIELDS_SET = `#graphql
   mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -87,6 +91,19 @@ async function getAdminForShop(shop?: string) {
   return admin;
 }
 
+async function getShopCurrency(
+  admin: Awaited<ReturnType<typeof getAdminForShop>>,
+): Promise<string | null> {
+  try {
+    const res = await admin.graphql(SHOP_CURRENCY_QUERY);
+    const body = await res.json();
+    return body.data?.shop?.currencyCode ?? null;
+  } catch (err) {
+    console.error("[priceListPush] failed to read shop currency", err);
+    return null;
+  }
+}
+
 async function syncMetafields(
   admin: Awaited<ReturnType<typeof getAdminForShop>>,
   input: PushPriceListInput,
@@ -96,16 +113,32 @@ async function syncMetafields(
     (id) => !currentVariantIds.has(id),
   );
 
+  // Every list writes its own currency-specific keys, so a USD and a EUR list
+  // covering the same variant no longer overwrite each other. The original
+  // un-suffixed keys are only kept up to date for the shop's own currency
+  // (that is the only currency readers fall back to them for).
+  const { priceKey, tiersKey } = currencyKeys(input.currency);
+  const shopCurrency = await getShopCurrency(admin);
+  const writeLegacy = sameCurrency(input.currency, shopCurrency);
+  const keysPerVariant = writeLegacy ? 4 : 2;
+
   if (removedVariantIds.length > 0) {
     for (const batch of chunk(removedVariantIds, 25)) {
       const deleteRes = await admin.graphql(METAFIELDS_DELETE, {
         variables: {
           metafields: batch.flatMap((id) => {
             const ownerId = id.startsWith("gid://shopify/ProductVariant/") ? id : `gid://shopify/ProductVariant/${id}`;
-            return [
-              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_KEY },
-              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: WHOLESALE_PRICE_TIERS_KEY },
+            const identifiers = [
+              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: priceKey },
+              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: tiersKey },
             ];
+            if (writeLegacy) {
+              identifiers.push(
+                { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: LEGACY_PRICE_KEY },
+                { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: LEGACY_TIERS_KEY },
+              );
+            }
+            return identifiers;
           }),
         },
       });
@@ -118,34 +151,56 @@ async function syncMetafields(
   }
 
   let updatedCount = 0;
-  // Batch of 12 prices -> 24 metafield writes per call, staying under the
-  // same ~25-per-request budget the delete loop above uses.
-  for (const batch of chunk(input.prices, 12)) {
+  // Keep each call under the ~25-metafield-per-request budget the delete loop
+  // above uses: 12 prices -> 24 writes, or 6 prices -> 24 writes when the
+  // un-suffixed keys are written as well.
+  const batchSize = Math.floor(24 / keysPerVariant);
+  for (const batch of chunk(input.prices, batchSize)) {
     const setRes = await admin.graphql(METAFIELDS_SET, {
       variables: {
         metafields: batch.flatMap((p) => {
           const ownerId = p.variantId.startsWith("gid://shopify/ProductVariant/")
             ? p.variantId
             : `gid://shopify/ProductVariant/${p.variantId}`;
-          return [
+          // Plain text (not Shopify's "json" metafield type) so Liquid's
+          // `metafield.value` is always guaranteed to be the raw string —
+          // `| parse_json` in Liquid then decodes the tier list.
+          const tiersValue = JSON.stringify(p.tiers);
+          const writes = [
             {
               ownerId,
               namespace: WHOLESALE_PRICE_NAMESPACE,
-              key: WHOLESALE_PRICE_KEY,
+              key: priceKey,
               type: "number_decimal",
               value: p.amount,
             },
             {
               ownerId,
               namespace: WHOLESALE_PRICE_NAMESPACE,
-              key: WHOLESALE_PRICE_TIERS_KEY,
-              // Plain text (not Shopify's "json" metafield type) so Liquid's
-              // `metafield.value` is always guaranteed to be the raw string —
-              // `| parse_json` in Liquid then decodes the tier list.
+              key: tiersKey,
               type: "multi_line_text_field",
-              value: JSON.stringify(p.tiers),
+              value: tiersValue,
             },
           ];
+          if (writeLegacy) {
+            writes.push(
+              {
+                ownerId,
+                namespace: WHOLESALE_PRICE_NAMESPACE,
+                key: LEGACY_PRICE_KEY,
+                type: "number_decimal",
+                value: p.amount,
+              },
+              {
+                ownerId,
+                namespace: WHOLESALE_PRICE_NAMESPACE,
+                key: LEGACY_TIERS_KEY,
+                type: "multi_line_text_field",
+                value: tiersValue,
+              },
+            );
+          }
+          return writes;
         }),
       },
     });

@@ -50,6 +50,13 @@ export type OrderRow = {
   customerName?: string;
   customerEmail?: string;
   shopifyCustomerId?: string;
+  // Present when a sales agent placed the order for the customer; backend-api
+  // re-verifies the context before recording it.
+  placedByAgent?: { agentShopifyCustomerId: string; contextId: string; overrideIds?: string[]; quoteId?: string };
+  poNumber?: string;
+  requestedDeliveryDate?: string;
+  // For the team only; never shown to the customer.
+  internalNote?: string;
 };
 
 interface OrderNode {
@@ -206,6 +213,10 @@ export interface ShopifyOrderWebhookPayload {
     email?: string | null;
   } | null;
   note_attributes?: { name: string; value: string }[] | null;
+  po_number?: string | null;
+  // What the hosted checkout added on top of the items.
+  total_tax?: string | null;
+  total_shipping_price_set?: { shop_money?: { amount?: string | null } | null } | null;
   discount_codes?: { code: string; amount: string; type: string }[] | null;
 }
 
@@ -236,6 +247,28 @@ export async function syncOrderFromWebhookPayload(
     customerEmail: customer?.email || undefined,
     shopifyCustomerId: customer?.admin_graphql_api_id || undefined,
   };
+
+  const agentId = payload.note_attributes?.find((attr) => attr.name === "_sparklayer_agent_id")?.value;
+  const contextId = payload.note_attributes?.find((attr) => attr.name === "_sparklayer_context_id")?.value;
+  if (agentId && contextId) {
+    // The exceptions and the quote the order was built on travel with it.
+    let overrideIds: string[] = [];
+    try {
+      const raw = payload.note_attributes?.find((attr) => attr.name === "_sparklayer_override_ids")?.value;
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) overrideIds = parsed.map(String);
+    } catch {
+      overrideIds = [];
+    }
+    const quoteId = payload.note_attributes?.find((attr) => attr.name === "_sparklayer_quote_id")?.value;
+    row.placedByAgent = { agentShopifyCustomerId: agentId, contextId, overrideIds, quoteId };
+  }
+
+  if (payload.po_number) row.poNumber = payload.po_number;
+  const delivery = payload.note_attributes?.find((attr) => attr.name === "Requested delivery date")?.value;
+  if (delivery) row.requestedDeliveryDate = delivery;
+  const internal = payload.note_attributes?.find((attr) => attr.name === "_sparklayer_internal_note")?.value;
+  if (internal) row.internalNote = internal;
 
   try {
     await syncOrderRows([row], shop);

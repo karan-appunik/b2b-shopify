@@ -26,6 +26,42 @@
       .replace(/\{\{\s*amount\s*\}\}/, value);
   }
 
+  function formatCustom(cents, symbol) {
+    var val = (cents / 100).toFixed(2);
+    var parts = val.split(".");
+    var withComma = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + parts[1];
+    return (symbol || "$") + withComma;
+  }
+
+  function extractMsrpFromRaw(rawMsrp, targetCurrency) {
+    if (!rawMsrp) return null;
+    var data = rawMsrp;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (e) {
+        data = null;
+      }
+    }
+    if (Array.isArray(data)) {
+      for (var i = 0; i < data.length; i++) {
+        if (data[i] && String(data[i].currency_code || "").toLowerCase() === targetCurrency) {
+          return Math.round(Number(data[i].value) * 100);
+        }
+      }
+      for (var j = 0; j < data.length; j++) {
+        if (data[j] && data[j].value != null) {
+          return Math.round(Number(data[j].value) * 100);
+        }
+      }
+    } else if (data && typeof data === "object" && data.value != null) {
+      return Math.round(Number(data.value) * 100);
+    } else if (typeof data === "number" && data > 0) {
+      return Math.round(data * 100);
+    }
+    return null;
+  }
+
   function initInstance(root) {
     var variantsScript = root.querySelector("[data-sl-variants]");
     if (!variantsScript) return;
@@ -44,6 +80,26 @@
     }
 
     var moneyFormat = root.dataset.moneyFormat || "${{amount}}";
+    var currencySymbol = root.dataset.currencySymbol || "$";
+    var urlParams = new URLSearchParams(window.location.search);
+    var countryParam = (urlParams.get("country") || "").toUpperCase();
+    var currencyParam = (urlParams.get("currency") || "").toUpperCase();
+    var eurCountries = ["DE", "FR", "IT", "ES", "NL", "BE", "AT", "IE", "PT", "FI", "GR", "LU"];
+    var forcedCurrency = null;
+
+    if (currencyParam === "EUR" || eurCountries.indexOf(countryParam) !== -1) {
+      forcedCurrency = "eur";
+      currencySymbol = "€";
+    } else if (currencyParam === "GBP" || countryParam === "GB" || countryParam === "UK") {
+      forcedCurrency = "gbp";
+      currencySymbol = "£";
+    } else if (currencyParam === "CAD" || countryParam === "CA") {
+      forcedCurrency = "cad";
+      currencySymbol = "CA$";
+    } else if (currencyParam === "USD" || countryParam === "US") {
+      forcedCurrency = "usd";
+      currencySymbol = "$";
+    }
     var addToCartText = root.dataset.i18nAddToCart || "Add to cart";
     var addWithPriceTemplate = root.dataset.i18nAddWithPrice || "Add ({{price}})";
     var soldOutText = root.dataset.i18nSoldOut || "Sold out";
@@ -107,16 +163,29 @@
       qtyInput.dataset.variantPrice = String(effectivePrice);
 
       if (priceEl && pricePrimary) {
+        var msrpCents = variant.customMsrp;
+        if (forcedCurrency && variant.msrpRaw) {
+          var parsed = extractMsrpFromRaw(variant.msrpRaw, forcedCurrency);
+          if (parsed != null) msrpCents = parsed;
+        }
+
         if (tierDollars != null) {
           pricePrimary.textContent = "WSP " + formatMoney(effectivePrice, moneyFormat);
           if (priceSecondary) {
-            priceSecondary.textContent = "MSRP: " + formatMoney(variant.nativePrice, moneyFormat);
+            if (msrpCents != null && msrpCents > 0) {
+              priceSecondary.textContent = "MSRP: " + formatCustom(msrpCents, currencySymbol);
+            } else {
+              priceSecondary.textContent = "MSRP: " + formatMoney(variant.nativePrice, moneyFormat);
+            }
             priceSecondary.style.display = "";
           }
         } else {
           pricePrimary.textContent = formatMoney(variant.nativePrice, moneyFormat);
           if (priceSecondary) {
-            if (variant.compareAtPrice && variant.compareAtPrice > variant.nativePrice) {
+            if (msrpCents != null && msrpCents > 0) {
+              priceSecondary.textContent = "MSRP: " + formatCustom(msrpCents, currencySymbol);
+              priceSecondary.style.display = "";
+            } else if (variant.compareAtPrice && variant.compareAtPrice > variant.nativePrice) {
               priceSecondary.textContent = "MSRP: " + formatMoney(variant.compareAtPrice, moneyFormat);
               priceSecondary.style.display = "";
             } else {

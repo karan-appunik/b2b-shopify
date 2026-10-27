@@ -23,8 +23,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
     }
 
+    // The shopper's cart currency picks which per-currency wholesale price is
+    // read (see wholesaleMetafields.server.ts).
+    const currency = url.searchParams.get("currency");
+
     const gids = variantIds.map((id) => `gid://shopify/ProductVariant/${id}`);
-    const pricing = await fetchVariantPricing(admin, gids);
+    const pricing = await fetchVariantPricing(admin, gids, currency);
 
     const variants = variantIds.map((id) => {
       const entry = pricing.get(`gid://shopify/ProductVariant/${id}`);
@@ -33,6 +37,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         price: entry?.price ?? null,
         wholesalePrice: entry?.wholesalePrice ?? null,
         tiers: entry?.tiers ?? [],
+        taxable: entry?.taxable ?? true,
+        taxesIncluded: entry?.taxesIncluded ?? false,
       };
     });
 

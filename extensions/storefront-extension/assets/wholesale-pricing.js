@@ -12,6 +12,42 @@
       .replace(/\{\{\s*amount\s*\}\}/, value);
   }
 
+  function formatCustom(cents, symbol) {
+    var val = (cents / 100).toFixed(2);
+    var parts = val.split(".");
+    var withComma = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + parts[1];
+    return (symbol || "$") + withComma;
+  }
+
+  function extractMsrpFromRaw(rawMsrp, targetCurrency) {
+    if (!rawMsrp) return null;
+    var data = rawMsrp;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (e) {
+        data = null;
+      }
+    }
+    if (Array.isArray(data)) {
+      for (var i = 0; i < data.length; i++) {
+        if (data[i] && String(data[i].currency_code || "").toLowerCase() === targetCurrency) {
+          return Math.round(Number(data[i].value) * 100);
+        }
+      }
+      for (var j = 0; j < data.length; j++) {
+        if (data[j] && data[j].value != null) {
+          return Math.round(Number(data[j].value) * 100);
+        }
+      }
+    } else if (data && typeof data === "object" && data.value != null) {
+      return Math.round(Number(data.value) * 100);
+    } else if (typeof data === "number" && data > 0) {
+      return Math.round(data * 100);
+    }
+    return null;
+  }
+
   // Picks the price for the highest tier whose minQuantity the given
   // quantity still qualifies for (tiers must be sorted ascending).
   function pickTierPrice(tiers, quantity) {
@@ -28,6 +64,27 @@
 
   function initInstance(root) {
     var moneyFormat = root.dataset.moneyFormat || "${{amount}}";
+    var currencySymbol = root.dataset.currencySymbol || "$";
+    var urlParams = new URLSearchParams(window.location.search);
+    var countryParam = (urlParams.get("country") || "").toUpperCase();
+    var currencyParam = (urlParams.get("currency") || "").toUpperCase();
+    var eurCountries = ["DE", "FR", "IT", "ES", "NL", "BE", "AT", "IE", "PT", "FI", "GR", "LU"];
+    var forcedCurrency = null;
+
+    if (currencyParam === "EUR" || eurCountries.indexOf(countryParam) !== -1) {
+      forcedCurrency = "eur";
+      currencySymbol = "€";
+    } else if (currencyParam === "GBP" || countryParam === "GB" || countryParam === "UK") {
+      forcedCurrency = "gbp";
+      currencySymbol = "£";
+    } else if (currencyParam === "CAD" || countryParam === "CA") {
+      forcedCurrency = "cad";
+      currencySymbol = "CA$";
+    } else if (currencyParam === "USD" || countryParam === "US") {
+      forcedCurrency = "usd";
+      currencySymbol = "$";
+    }
+
     var addToCartText = root.dataset.i18nAddToCart || "Add to cart";
     var wspPrefix = root.dataset.i18nWspPrefix || "";
     var msrpPrefix = root.dataset.i18nMsrp || "MSRP";
@@ -56,7 +113,7 @@
     // tier price. Passing tierDollars === null means no tier qualifies yet,
     // so it falls back to the real native/compare-at price instead of
     // leaving a wholesale figure that quantity no longer actually gets.
-    function applyPriceDisplay(container, tierDollars, nativeCents, compareAtCents) {
+    function applyPriceDisplay(container, tierDollars, nativeCents, compareAtCents, customMsrpCents) {
       if (!container) return;
       var wspEl = container.querySelector(".sl-wsp-price-wsp");
       var msrpEl = container.querySelector(".sl-wsp-price-msrp");
@@ -65,7 +122,11 @@
         var tierCents = Math.round(tierDollars * 100);
         if (wspEl) wspEl.textContent = wspPrefix + formatMoney(tierCents, moneyFormat);
         if (msrpEl) {
-          msrpEl.textContent = msrpPrefix + ": " + formatMoney(nativeCents, moneyFormat);
+          if (customMsrpCents != null && customMsrpCents > 0) {
+            msrpEl.textContent = msrpPrefix + ": " + formatCustom(customMsrpCents, currencySymbol);
+          } else {
+            msrpEl.textContent = msrpPrefix + ": " + formatMoney(nativeCents, moneyFormat);
+          }
           msrpEl.style.display = "";
         }
         return tierCents;
@@ -73,7 +134,10 @@
 
       if (wspEl) wspEl.textContent = formatMoney(nativeCents, moneyFormat);
       if (msrpEl) {
-        if (compareAtCents > nativeCents) {
+        if (customMsrpCents != null && customMsrpCents > 0) {
+          msrpEl.textContent = msrpPrefix + ": " + formatCustom(customMsrpCents, currencySymbol);
+          msrpEl.style.display = "";
+        } else if (compareAtCents > nativeCents) {
           msrpEl.textContent = msrpPrefix + ": " + formatMoney(compareAtCents, moneyFormat);
           msrpEl.style.display = "";
         } else {
@@ -96,13 +160,14 @@
       var tierDollars = tiers && tiers.length ? pickTierPrice(tiers, qty) : null;
       var nativeCents = Number(input.dataset.nativePrice) || 0;
       var compareAtCents = Number(input.dataset.compareAtPrice) || 0;
+      var customMsrpCents = input.dataset.msrpPrice ? Number(input.dataset.msrpPrice) : null;
 
       var row = input.closest("tr");
-      var effectiveCents = applyPriceDisplay(row, tierDollars, nativeCents, compareAtCents);
+      var effectiveCents = applyPriceDisplay(row, tierDollars, nativeCents, compareAtCents, customMsrpCents);
       input.dataset.variantPrice = String(effectiveCents);
 
       if (summaryEl && variantId === summaryVariantId) {
-        applyPriceDisplay(summaryEl, tierDollars, nativeCents, compareAtCents);
+        applyPriceDisplay(summaryEl, tierDollars, nativeCents, compareAtCents, customMsrpCents);
       }
     }
 
@@ -177,6 +242,47 @@
           updateTotal();
         });
     });
+
+    qtyInputs.forEach(function (input) {
+      var customMsrpCents = input.dataset.msrpPrice ? Number(input.dataset.msrpPrice) : null;
+      if (forcedCurrency && input.dataset.msrpRaw) {
+        var parsedCents = extractMsrpFromRaw(input.dataset.msrpRaw, forcedCurrency);
+        if (parsedCents != null) {
+          customMsrpCents = parsedCents;
+          input.dataset.msrpPrice = String(parsedCents);
+        }
+      }
+      if (customMsrpCents && customMsrpCents > 0) {
+        var row = input.closest("tr");
+        if (row) {
+          var msrpEl = row.querySelector(".sl-wsp-price-msrp");
+          if (msrpEl) {
+            msrpEl.textContent = msrpPrefix + ": " + formatCustom(customMsrpCents, currencySymbol);
+            msrpEl.style.display = "";
+          }
+        }
+      }
+    });
+
+    if (summaryEl) {
+      var summaryCustomMsrp = null;
+      if (forcedCurrency && summaryEl.dataset.summaryMsrpRaw) {
+        summaryCustomMsrp = extractMsrpFromRaw(summaryEl.dataset.summaryMsrpRaw, forcedCurrency);
+      }
+      if (!summaryCustomMsrp) {
+        var selectedInput = root.querySelector('[data-sl-qty-input][data-variant-id="' + summaryVariantId + '"]');
+        if (selectedInput && selectedInput.dataset.msrpPrice) {
+          summaryCustomMsrp = Number(selectedInput.dataset.msrpPrice);
+        }
+      }
+      if (summaryCustomMsrp && summaryCustomMsrp > 0) {
+        var sumMsrpEl = summaryEl.querySelector(".sl-wsp-price-msrp");
+        if (sumMsrpEl) {
+          sumMsrpEl.textContent = msrpPrefix + ": " + formatCustom(summaryCustomMsrp, currencySymbol);
+          sumMsrpEl.style.display = "";
+        }
+      }
+    }
 
     updateTotal();
     initImagePreview(root);

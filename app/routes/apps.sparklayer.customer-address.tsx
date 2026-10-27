@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { resolveEffectiveCustomerId, authorizeOnBehalf, recordAgentAddress } from "../services/agentContext.server";
 
 const CUSTOMER_ADDRESS_CREATE = `#graphql
   mutation CustomerAddressCreate($customerId: ID!, $address: MailingAddressInput!) {
@@ -47,7 +48,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const { admin } = await authenticate.public.appProxy(request);
+    const { admin, session } = await authenticate.public.appProxy(request);
 
     // Shopify appends this automatically to app proxy requests when the
     // storefront visitor has an active customer session — never trust a
@@ -62,6 +63,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    // While a sales agent is ordering for a customer, the new address goes on
+    // that customer's account, not the agent's.
+    const targetCustomerId =
+      (session ? await resolveEffectiveCustomerId(session.shop, loggedInCustomerId) : null) ?? loggedInCustomerId;
+
+    // Adding an address to a customer's account on their behalf needs the
+    // address.create permission on the agent's role.
+    if (session) {
+      const permission = await authorizeOnBehalf(session.shop, loggedInCustomerId, "address.create");
+      if (permission.onBehalf && !permission.allowed) {
+        return new Response(
+          JSON.stringify({ error: "Your role does not allow adding addresses for customers." }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
     const payload = await request.json();
 
     if (!payload.firstName || !payload.lastName || !payload.address1 || !payload.city) {
@@ -73,7 +91,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const response = await admin.graphql(CUSTOMER_ADDRESS_CREATE, {
       variables: {
-        customerId: `gid://shopify/Customer/${loggedInCustomerId}`,
+        customerId: `gid://shopify/Customer/${targetCustomerId}`,
         address: {
           firstName: payload.firstName,
           lastName: payload.lastName,
@@ -101,10 +119,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const address = result.address;
 
+    // On a customer's behalf, who added what is written to the audit trail.
+    if (session) {
+      await recordAgentAddress(session.shop, loggedInCustomerId, {
+        city: address.city,
+        country: address.countryCodeV2,
+        setDefault: !!payload.setDefault,
+      }).catch((err) => console.error("customer-address audit failed", err));
+    }
+
     if (payload.setDefault) {
       const defaultResponse = await admin.graphql(CUSTOMER_UPDATE_DEFAULT_ADDRESS, {
         variables: {
-          customerId: `gid://shopify/Customer/${loggedInCustomerId}`,
+          customerId: `gid://shopify/Customer/${targetCustomerId}`,
           addressId: address.id,
         },
       });

@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { resolveEffectiveCustomerId } from "../services/agentContext.server";
 import fs from "fs";
 
 const debugLogPath = "e:\\B2B\\SparkLayer\\admin-frontend\\debug.log";
@@ -60,7 +61,7 @@ function categoryForStatus(status: string): "awaiting_merchant" | "order" {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const { admin } = await authenticate.public.appProxy(request);
+    const { admin, session } = await authenticate.public.appProxy(request);
 
     const url = new URL(request.url);
     const loggedInCustomerId = url.searchParams.get("logged_in_customer_id");
@@ -76,7 +77,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
     }
 
-    const customerId = `gid://shopify/Customer/${loggedInCustomerId}`;
+    // While a sales agent is ordering for a customer, list that customer's orders.
+    const effectiveCustomerId = session
+      ? await resolveEffectiveCustomerId(session.shop, loggedInCustomerId)
+      : loggedInCustomerId;
+    const customerId = `gid://shopify/Customer/${effectiveCustomerId ?? loggedInCustomerId}`;
 
     // The full order-history view lets shoppers filter by year, so we also
     // need the range of years they actually have orders in for the dropdown.

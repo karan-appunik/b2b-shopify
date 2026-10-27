@@ -1,9 +1,9 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "56b7efd1eedb1c31bbe0fc31d8dae0af"
+client_id = "ce1d84c1a1f98a976b491723c5e54f4b"
 application_url = "https://example.com"
 embedded = true
-name = "WholesaleFlow"
+name = "SparkLayer"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes

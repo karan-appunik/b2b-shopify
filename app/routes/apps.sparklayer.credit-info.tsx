@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getCreditInfo } from "../services/creditLimit.server";
+import { resolveEffectiveCustomerId } from "../services/agentContext.server";
 
 // Feeds the cart drawer's "My Details" panel (Credit limit / Available
 // credit) — same source of truth the checkout proxy enforces against.
@@ -18,7 +19,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       );
     }
 
-    const info = await getCreditInfo(admin ?? null, session.shop, loggedInCustomerId);
+    // While a sales agent is ordering for a customer, show that customer's credit.
+    const customerId = await resolveEffectiveCustomerId(session.shop, loggedInCustomerId);
+    const info = await getCreditInfo(admin ?? null, session.shop, customerId ?? loggedInCustomerId);
 
     return new Response(JSON.stringify(info), {
       headers: { "Content-Type": "application/json" },

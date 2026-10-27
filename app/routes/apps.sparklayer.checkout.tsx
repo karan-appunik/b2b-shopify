@@ -6,6 +6,29 @@ import { getCreditInfo, checkCreditLimit, chargeCredit } from "../services/credi
 import { getActiveDiscounts, resolveDiscount, resolveShippingDiscount, resolveFreeProductDiscount, resolveLineItemDiscount, resolveAdvancedRewards, validateAndSplitCoupons, lineMatchesCondition, discountAmount, resolveFreeProductAward, resolveAdvancedFreeProductGroups, resolveFreeProductGroupAward, type Discount } from "../services/discountLookup.server";
 import { syncOrderRows, type OrderRow } from "../services/orderSync.server";
 import { calculateShippingLine } from "../services/shippingRate.server";
+import {
+  resolveOrderActor,
+  authorizeOnBehalf,
+  getAgentOverrides,
+  markOverridesApplied,
+  createPaymentLink,
+  getModuleSettings,
+  reportOrderFailure,
+} from "../services/agentContext.server";
+import { checkStock, describeIssues, type StockVariant } from "../services/stockCheck.server";
+import { comparePrices, describeChanges } from "../services/priceChange.server";
+import {
+  overridesForCheckout,
+  orderExceptionsForCheckout,
+  appliedExceptionIds,
+  relaxedMinQuantity,
+  type OrderExceptions,
+  pendingOverrides,
+  effectiveUnitPrice,
+  type AgentOverride,
+  type AppliedOverride,
+} from "../services/agentOverrides.server";
+import { beginOperation, completeOperation, releaseOperation } from "../services/idempotency.server";
 
 const DRAFT_ORDER_CREATE = `#graphql
   mutation DraftOrderCreate($input: DraftOrderInput!) {
@@ -13,10 +36,46 @@ const DRAFT_ORDER_CREATE = `#graphql
       draftOrder {
         id
         invoiceUrl
+        totalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
       }
       userErrors {
         field
         message
+      }
+    }
+  }
+`;
+
+const DRAFT_ORDER_STAMP = `#graphql
+  mutation DraftOrderStamp($id: ID!, $input: DraftOrderInput!) {
+    draftOrderUpdate(id: $id, input: $input) {
+      draftOrder {
+        id
+      }
+      userErrors {
+        message
+      }
+    }
+  }
+`;
+
+const STOCK_QUERY = `#graphql
+  query StockCheck($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on ProductVariant {
+        id
+        title
+        sku
+        inventoryQuantity
+        inventoryPolicy
+        product {
+          title
+        }
       }
     }
   }
@@ -114,7 +173,7 @@ async function findPaymentTermsTemplateId(admin: any, customerId: string, paymen
   return null;
 }
 
-export const action = async ({ request }: ActionFunctionArgs) => {
+const handleCheckout = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -140,6 +199,76 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const payload = await request.json();
 
+    // A sales agent can order for a customer they've entered a context for.
+    // Everything below that is customer-specific (order limits, credit,
+    // discounts, payment terms, the draft order's owner) uses the customer
+    // the order is really for; the agent stays on record as the actor.
+    const actor = await resolveOrderActor(session?.shop ?? "", loggedInCustomerId, payload.agentContextId);
+    if (actor.kind === "error") {
+      return new Response(JSON.stringify({ error: actor.message, code: actor.code }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const orderCustomerId = actor.kind === "on_behalf" ? actor.customerId : loggedInCustomerId;
+
+    // Placing an order for a customer needs the order.submit permission on
+    // the agent's role (a quote-only role, for instance, doesn't have it).
+    if (actor.kind === "on_behalf" && loggedInCustomerId) {
+      const permission = await authorizeOnBehalf(session?.shop ?? "", loggedInCustomerId, "order.submit");
+      if (!permission.allowed) {
+        const pending = permission.reason === "ACCOUNT_PENDING_APPROVAL";
+        if (permission.reason === "CONTEXT_STALE") {
+          return new Response(
+            JSON.stringify({
+              error: "Your access changed since you started this order. Use Refresh in the Agent Mode bar, then try again.",
+              code: "CONTEXT_STALE",
+            }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            error: pending
+              ? "This new customer is waiting for approval. Orders can be placed once the account is approved."
+              : "Your role does not allow placing orders for customers.",
+            code: pending ? "ACCOUNT_PENDING_APPROVAL" : "PERMISSION_DENIED",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
+    // An agent never takes a card: orders paid online go to the customer as a
+    // secure payment link, which needs its own permission.
+    const paysOnline = payload.paymentMethod !== "advance" && payload.paymentMethod !== "account";
+    if (actor.kind === "on_behalf" && loggedInCustomerId && paysOnline) {
+      const permission = await authorizeOnBehalf(session?.shop ?? "", loggedInCustomerId, "payment_link.send");
+      if (!permission.allowed && permission.unavailable) {
+        return new Response(
+          JSON.stringify({ error: "We couldn't check your permissions just now. Please try again in a moment.", code: "TEMPORARILY_UNAVAILABLE" }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (!permission.allowed) {
+        return new Response(
+          JSON.stringify({
+            error: "Your role can't send payment links, so this order can't be paid online. Choose another payment method or ask a manager.",
+            code: "PERMISSION_DENIED",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
+    // An approval-first role can't place an order until a manager has agreed
+    // to this exact order (checked below, once the total is known).
+    let needsOrderApproval = false;
+    if (actor.kind === "on_behalf" && loggedInCustomerId) {
+      const mode = await authorizeOnBehalf(session?.shop ?? "", loggedInCustomerId, "order.submit");
+      needsOrderApproval = mode.allowed && mode.constraints?.mode === "approval_first";
+    }
+
     const lineItems = Array.isArray(payload.lineItems) ? payload.lineItems : [];
     const currency = payload.currency || "USD";
 
@@ -150,6 +279,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    // Exceptions (agreed price changes) the agent has for this customer's
+    // order. Checkout is held while one is still waiting for approval; the
+    // approved ones replace the line's price below.
+    let appliedOverrides = new Map<string, AppliedOverride>();
+    let orderExceptions: OrderExceptions = { discount: null, shipping: null, acceptedMinQuantity: null, incrementWaived: null, address: null, credit: null, orderApproval: null, customLines: [] };
+    if (actor.kind === "on_behalf" && loggedInCustomerId) {
+      const agentOverrides = (await getAgentOverrides(session?.shop ?? "", loggedInCustomerId)) as AgentOverride[];
+
+      if (pendingOverrides(agentOverrides).length > 0) {
+        return new Response(
+          JSON.stringify({
+            error: "Something is still waiting for approval. It has to be approved or withdrawn before checkout.",
+            code: "APPROVAL_REQUIRED",
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      appliedOverrides = overridesForCheckout(agentOverrides, lineItems, currency);
+      orderExceptions = orderExceptionsForCheckout(agentOverrides, currency);
+    }
+
     // Wholesale pricing is looked up fresh here rather than trusted from the
     // cart drawer's payload — it no longer depends on a Shopify Segment /
     // Automatic Discount having already applied to the cart (see
@@ -158,7 +309,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const variantGids = lineItems.map(
       (item: any) => `gid://shopify/ProductVariant/${item.variantId}`,
     );
-    const pricing = await fetchVariantPricing(admin, variantGids);
+    const pricing = await fetchVariantPricing(admin, variantGids, currency);
 
     // Enforce the shopper's customer group order limits (set in the merchant
     // panel's Customer Groups > Order quantity/total limits) before a draft
@@ -173,18 +324,78 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const variantPricing = pricing.get(variantId);
       if (!variantPricing) return sum;
       const tierPrice = pickTierPrice(variantPricing.tiers, item.quantity);
-      const unitPrice =
-        tierPrice != null && tierPrice < variantPricing.price ? tierPrice : variantPricing.price;
+      const unitPrice = effectiveUnitPrice(
+        variantId,
+        tierPrice != null && tierPrice < variantPricing.price ? tierPrice : variantPricing.price,
+        appliedOverrides,
+      );
       return sum + unitPrice * Number(item.quantity || 0);
     }, 0);
 
-    const orderLimits = await getOrderLimits(session?.shop ?? "", loggedInCustomerId);
-    const limitViolation = checkOrderLimits(orderLimits, totalQuantity, totalValue, currency);
+    if (needsOrderApproval) {
+      const approved = orderExceptions.orderApproval && Math.round(totalValue * 100) <= Math.round(orderExceptions.orderApproval.total * 100) + 1;
+      if (!approved) {
+        return new Response(
+          JSON.stringify({
+            error: "A manager has to approve this order before it can be placed. Ask for approval, then come back here.",
+            code: "ORDER_APPROVAL_REQUIRED",
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
+    const orderLimits = await getOrderLimits(session?.shop ?? "", orderCustomerId);
+    // An approved quantity-rule exception lowers the minimum for this order.
+    const effectiveLimits = {
+      ...orderLimits,
+      quantity: { ...orderLimits.quantity, min: relaxedMinQuantity(orderLimits.quantity.min, orderExceptions) ?? null },
+    };
+    const limitViolation = checkOrderLimits(effectiveLimits, totalQuantity, totalValue, currency, {
+      waiveIncrement: !!orderExceptions.incrementWaived,
+    });
     if (limitViolation) {
       return new Response(JSON.stringify({ error: limitViolation }), {
         status: 422,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    // Stock (spec §9.5, AC11) is checked again for an agent's order. Not enough
+    // of something that can't be sold past zero blocks it; an item that can be
+    // backordered goes ahead only once the agent has said they know.
+    if (actor.kind === "on_behalf") {
+      const stockResponse = await admin.graphql(STOCK_QUERY, { variables: { ids: variantGids } });
+      const nodes = (((await stockResponse.json()) as any).data?.nodes ?? []).filter(Boolean);
+      const variants: StockVariant[] = nodes.map((n: any) => ({
+        id: n.id,
+        title: [n.product?.title, n.title !== "Default Title" ? n.title : null].filter(Boolean).join(" - "),
+        sku: n.sku ?? null,
+        inventoryQuantity: n.inventoryQuantity ?? null,
+        inventoryPolicy: n.inventoryPolicy ?? null,
+      }));
+      const stock = checkStock(lineItems, variants);
+
+      if (stock.unavailable.length) {
+        return new Response(
+          JSON.stringify({
+            error: `Not enough stock: ${describeIssues(stock.unavailable)}. Lower the quantity or remove the item.`,
+            code: "INVENTORY_UNAVAILABLE",
+            lines: stock.unavailable,
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (stock.backordered.length && payload.confirmBackorder !== true) {
+        return new Response(
+          JSON.stringify({
+            error: `Some items are not all in stock and would be backordered: ${describeIssues(stock.backordered)}.`,
+            code: "BACKORDER_CONFIRM",
+            lines: stock.backordered,
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        );
+      }
     }
 
     // Up to 4 discounts stack per order, up to 3 of them customer-entered
@@ -205,7 +416,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // only needs sku/tags/vendor.
         const tierPrice = variantPricing ? pickTierPrice(variantPricing.tiers, item.quantity) : null;
         const unitPrice = variantPricing
-          ? (tierPrice != null && tierPrice < variantPricing.price ? tierPrice : variantPricing.price)
+          ? effectiveUnitPrice(
+              variantId,
+              tierPrice != null && tierPrice < variantPricing.price ? tierPrice : variantPricing.price,
+              appliedOverrides,
+            )
           : 0;
         return {
           sku: variantPricing?.sku ?? null,
@@ -216,8 +431,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         };
       }),
     };
+    // The price the agent saw is checked against the price now (spec §7.5
+    // PRICE_CHANGED). If a line moved, the old and new totals are shown and the
+    // agent has to confirm before the order goes ahead.
+    if (actor.kind === "on_behalf" && payload.confirmPriceChange !== true) {
+      const check = comparePrices(
+        lineItems.map((l: any) => ({ variantId: l.variantId, quantity: l.quantity, expectedUnit: l.expectedUnit })),
+        lineItems.map((l: any, i: number) => {
+          const vp = pricing.get(`gid://shopify/ProductVariant/${l.variantId}`);
+          return { variantId: l.variantId, title: String(l.title || vp?.sku || `Variant ${l.variantId}`), sku: vp?.sku ?? null, unit: vp ? itemInfo.lines[i].price : null };
+        }),
+      );
+      if (check.changes.length) {
+        return new Response(
+          JSON.stringify({
+            error: `The price changed since you added these items: ${describeChanges(check, currency)}.`,
+            code: "PRICE_CHANGED",
+            changes: check.changes,
+            oldTotal: check.oldTotal,
+            newTotal: check.newTotal,
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
     const couponCodes: string[] = Array.isArray(payload.couponCodes) ? payload.couponCodes : [];
-    const shopifyCustomerGid = loggedInCustomerId ? `gid://shopify/Customer/${loggedInCustomerId}` : null;
+    const shopifyCustomerGid = orderCustomerId ? `gid://shopify/Customer/${orderCustomerId}` : null;
     const activeDiscounts = await getActiveDiscounts(session?.shop ?? "", couponCodes, shopifyCustomerGid);
     const splitCoupons = validateAndSplitCoupons(activeDiscounts, couponCodes, totalValue, currency, itemInfo);
     if ("error" in splitCoupons) {
@@ -282,16 +522,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // credit, same as SparkLayer blocking "Payment on Account" once a
     // shopper is over their limit.
     if (payload.paymentMethod === "account") {
-      const creditInfo = await getCreditInfo(admin, session?.shop ?? "", loggedInCustomerId);
+      const creditInfo = await getCreditInfo(admin, session?.shop ?? "", orderCustomerId);
       if (!creditInfo.onAccountEnabled) {
         return new Response(
           JSON.stringify({ error: "Payment on Account is not available for your account." }),
           { status: 422, headers: { "Content-Type": "application/json" } },
         );
       }
-      const creditViolation = checkCreditLimit(creditInfo, totalValue);
+      // An approved credit exception lets this order go as far as it was approved for.
+      const creditApproved = orderExceptions.credit && totalValue <= orderExceptions.credit.exposure + 0.005;
+      const creditViolation = creditApproved ? null : checkCreditLimit(creditInfo, totalValue);
       if (creditViolation) {
-        return new Response(JSON.stringify({ error: creditViolation }), {
+        return new Response(JSON.stringify({ error: creditViolation, code: "CREDIT_LIMIT_EXCEEDED" }), {
           status: 422,
           headers: { "Content-Type": "application/json" },
         });
@@ -351,6 +593,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
+      // An agreed exception replaces the computed price outright.
+      const agentOverride = appliedOverrides.get(variantId);
+      if (agentOverride) unitPrice = agentOverride.unitPrice;
+
       // originalUnitPrice + a line appliedDiscount used to be how this set
       // the wholesale price, but originalUnitPrice is a dead field for
       // variant-based lines on Admin API 2025-10 (confirmed via schema
@@ -360,7 +606,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // priceOverride is the current mechanism: it sets the actual charged
       // unit price directly, so the buyer is billed exactly the tier price
       // with no drift from what totalValue (below) assumes.
-      if (unitPrice < variantPricing.price) {
+      if (unitPrice < variantPricing.price || agentOverride) {
         line.priceOverride = { amount: unitPrice.toFixed(2), currencyCode: currency };
       }
 
@@ -413,6 +659,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
+    // Custom lines the agent was approved to add (spec §8.2).
+    for (const line of orderExceptions.customLines) {
+      orderLineItems.push({
+        title: line.title,
+        quantity: line.quantity,
+        originalUnitPriceWithCurrency: { amount: line.unitPrice.toFixed(2), currencyCode: currency },
+        requiresShipping: false,
+        taxable: line.taxable,
+        customAttributes: [
+          ...(line.taxCode ? [{ key: "Tax code", value: line.taxCode }] : []),
+          ...(line.accountingCode ? [{ key: "Accounting code", value: line.accountingCode }] : []),
+        ],
+      });
+    }
+
     const input: Record<string, unknown> = {
       lineItems: orderLineItems,
     };
@@ -430,12 +691,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
     }
 
+    // An approved order discount comes off as one fixed amount. Shopify takes a
+    // single order-level discount, so it is added to any the rules gave.
+    if (orderExceptions.discount) {
+      const existing = input.appliedDiscount as { title: string; value: number } | undefined;
+      const extra = Math.min(orderExceptions.discount.amount, Math.max(totalValue - (existing?.value ?? 0), 0));
+      if (extra > 0) {
+        input.appliedDiscount = {
+          title: existing ? existing.title + " + Agreed discount" : "Agreed discount",
+          valueType: "FIXED_AMOUNT",
+          value: Number(((existing?.value ?? 0) + extra).toFixed(2)),
+        };
+      }
+    }
+
     if (payload.note) {
       input.note = payload.note;
     }
 
-    if (loggedInCustomerId) {
-      input.customerId = `gid://shopify/Customer/${loggedInCustomerId}`;
+    if (orderCustomerId) {
+      input.customerId = `gid://shopify/Customer/${orderCustomerId}`;
+    }
+
+    // An approved one-off address replaces the chosen one for this order only;
+    // nothing is added to the customer's address book.
+    if (orderExceptions.address) {
+      const o = orderExceptions.address.address;
+      payload.shippingAddress = {
+        ...(payload.shippingAddress ?? {}),
+        company: o.company || undefined,
+        address1: o.address1,
+        address2: o.address2 || undefined,
+        city: o.city,
+        provinceCode: o.provinceCode || undefined,
+        zip: o.zip,
+        countryCode: o.countryCode,
+        phone: o.phone || undefined,
+      };
     }
 
     if (payload.shippingAddress) {
@@ -527,6 +819,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       input.shippingLine = shippingLine;
     }
 
+    // An approved shipping price replaces the calculated one, for every payment
+    // method (the customer's hosted checkout uses the draft order's line).
+    if (orderExceptions.shipping) {
+      input.shippingLine = { title: "Shipping (agreed)", price: orderExceptions.shipping.price.toFixed(2) };
+    }
+
     // "account" (Payment on Account) is completed directly below without a
     // Shopify payment-terms template — it doesn't depend on the company
     // location's Net Terms setting at all, only on the customer group's own
@@ -535,9 +833,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       payload.paymentMethod &&
       payload.paymentMethod !== "pay_now" &&
       payload.paymentMethod !== "account" &&
-      loggedInCustomerId
+      orderCustomerId
     ) {
-      const templateId = await findPaymentTermsTemplateId(admin, loggedInCustomerId, payload.paymentMethod);
+      const templateId = await findPaymentTermsTemplateId(admin, orderCustomerId, payload.paymentMethod);
       if (templateId) {
         const paymentTerms: Record<string, unknown> = { paymentTermsTemplateId: templateId };
         if (payload.paymentMethod === "net30") {
@@ -589,6 +887,69 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ];
     }
 
+    // Stamped on the draft order (carried onto the real order's note
+    // attributes) so the orders/create webhook and backend-api can attribute
+    // the order to the agent. The backend re-verifies the context before
+    // trusting these, so they're a claim, not proof.
+    if (actor.kind === "on_behalf" && loggedInCustomerId) {
+      input.customAttributes = [
+        ...((input.customAttributes as Array<{ key: string; value: string }> | undefined) ?? []),
+        { key: "_sparklayer_agent_id", value: `gid://shopify/Customer/${loggedInCustomerId}` },
+        { key: "_sparklayer_context_id", value: actor.contextId },
+      ];
+    }
+
+    // The buyer's purchase order number and the delivery date they asked for
+    // (spec §3.2 step 8). The date is carried on the order as a visible note.
+    const poNumber = String(payload.poNumber ?? "").trim();
+    if (poNumber) {
+      if (poNumber.length > 64) {
+        return new Response(JSON.stringify({ error: "The PO reference can be up to 64 characters." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      input.poNumber = poNumber;
+    }
+
+    const deliveryDate = String(payload.requestedDeliveryDate ?? "").trim();
+    if (deliveryDate) {
+      const parsed = /^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) ? new Date(deliveryDate + "T00:00:00Z") : null;
+      const today = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+      const latest = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000);
+      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== deliveryDate || parsed < today || parsed > latest) {
+        return new Response(JSON.stringify({ error: "Choose a delivery date from today up to a year ahead." }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      input.customAttributes = [
+        ...((input.customAttributes as Array<{ key: string; value: string }> | undefined) ?? []),
+        { key: "Requested delivery date", value: deliveryDate },
+      ];
+    }
+
+    // A note for the team, kept off anything the customer can read: it travels
+    // as a hidden attribute (leading underscore) and on our own order record.
+    const internalNote = actor.kind === "on_behalf" ? String(payload.internalNote ?? "").trim().slice(0, 500) : "";
+    if (internalNote) {
+      input.customAttributes = [
+        ...((input.customAttributes as Array<{ key: string; value: string }> | undefined) ?? []),
+        { key: "_sparklayer_internal_note", value: internalNote },
+      ];
+    }
+
+    const spentExceptionIds = appliedExceptionIds(appliedOverrides, orderExceptions);
+    if (spentExceptionIds.length > 0) {
+      input.customAttributes = [
+        ...((input.customAttributes as Array<{ key: string; value: string }> | undefined) ?? []),
+        {
+          key: "_sparklayer_override_ids",
+          value: JSON.stringify(spentExceptionIds),
+        },
+      ];
+    }
+
     console.log("[checkout] DraftOrderCreate input:", JSON.stringify(input, null, 2));
     const response = await admin.graphql(DRAFT_ORDER_CREATE, { variables: { input } });
     const body = (await response.json()) as any;
@@ -605,14 +966,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         userErrors: result?.userErrors,
         errors: body.errors,
       });
+      if (actor.kind === "on_behalf" && loggedInCustomerId) {
+        await reportOrderFailure(session?.shop ?? "", loggedInCustomerId, orderCustomerId ?? null, String(payload.idempotencyKey || ""), "DRAFT_ORDER_FAILED", errorMsg);
+      }
       return new Response(
         JSON.stringify({ error: errorMsg }),
         { status: 422, headers: { "Content-Type": "application/json" } }
       );
     }
 
+    // The agreed exceptions are now spent on this order; they can't be used
+    // on another.
+    if (spentExceptionIds.length > 0 && loggedInCustomerId) {
+      await markOverridesApplied(session?.shop ?? "", loggedInCustomerId, spentExceptionIds, result.draftOrder.id);
+    }
+
     if (payload.paymentMethod === "account") {
-      await chargeCredit(admin, session?.shop ?? "", loggedInCustomerId, totalValue);
+      await chargeCredit(admin, session?.shop ?? "", orderCustomerId, totalValue);
     }
 
     // "Advance before shipping" and "Payment on Account" are both paid with
@@ -628,6 +998,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const completeResult = completeBody.data?.draftOrderComplete;
       if (!completeResult || completeResult.userErrors?.length) {
+        if (actor.kind === "on_behalf" && loggedInCustomerId) {
+          await reportOrderFailure(session?.shop ?? "", loggedInCustomerId, orderCustomerId ?? null, String(payload.idempotencyKey || ""), "ORDER_COMPLETE_FAILED", completeResult?.userErrors?.[0]?.message || "Could not complete order");
+        }
         return new Response(
           JSON.stringify({ error: completeResult?.userErrors?.[0]?.message || "Could not complete order" }),
           { status: 422, headers: { "Content-Type": "application/json" } }
@@ -662,12 +1035,95 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         customerName: order.customer?.displayName || undefined,
         customerEmail: order.customer?.email || undefined,
         shopifyCustomerId: order.customer?.id || undefined,
+        placedByAgent:
+          actor.kind === "on_behalf" && loggedInCustomerId
+            ? {
+                agentShopifyCustomerId: `gid://shopify/Customer/${loggedInCustomerId}`,
+                contextId: actor.contextId,
+                overrideIds: spentExceptionIds,
+              }
+            : undefined,
       };
+      row.poNumber = poNumber || undefined;
+      row.requestedDeliveryDate = deliveryDate || undefined;
+      row.internalNote = internalNote || undefined;
       await syncOrderRows([row], session?.shop ?? "");
 
       return new Response(
         JSON.stringify({ order: { id: order.id, name: order.name, statusUrl: order.statusPageUrl } }),
         { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // On behalf of a customer the hosted payment page is not opened for the
+    // agent. A secure link goes to the customer's own email instead.
+    if (actor.kind === "on_behalf" && loggedInCustomerId) {
+      // If the shop holds stock for orders waiting on payment, hold it until
+      // the link runs out (a quote never does).
+      const moduleSettings = await getModuleSettings(session?.shop ?? "");
+      if (moduleSettings.inventoryMode === "reserve_orders") {
+        try {
+          await admin.graphql(DRAFT_ORDER_STAMP, {
+            variables: {
+              id: result.draftOrder.id,
+              input: { reserveInventoryUntil: new Date(Date.now() + moduleSettings.paymentLinkValidHours * 3600 * 1000).toISOString() },
+            },
+          });
+        } catch (err) {
+          console.error("[checkout] could not reserve stock for the draft order", err);
+        }
+      }
+
+      const money = result.draftOrder.totalPriceSet?.shopMoney;
+      const link = await createPaymentLink(session?.shop ?? "", loggedInCustomerId, {
+        customerShopifyId: `gid://shopify/Customer/${orderCustomerId}`,
+        draftOrderId: result.draftOrder.id,
+        invoiceUrl: result.draftOrder.invoiceUrl,
+        amount: Math.round(Number(money?.amount ?? 0) * 100),
+        currency: money?.currencyCode || currency,
+        shipTo: {
+          zip: payload.shippingAddress?.zip,
+          countryCode: payload.shippingAddress?.countryCode,
+          provinceCode: payload.shippingAddress?.provinceCode,
+        },
+      });
+
+      if (link.status !== 201) {
+        return new Response(
+          JSON.stringify({ error: link.body?.message || "Could not send the payment link", code: link.body?.code }),
+          { status: link.status === 500 ? 502 : link.status, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      // The link's token rides on the order Shopify creates once it is paid,
+      // which is how the payment gets matched back to the link.
+      try {
+        await admin.graphql(DRAFT_ORDER_STAMP, {
+          variables: {
+            id: result.draftOrder.id,
+            input: {
+              customAttributes: [
+                ...((input.customAttributes as Array<{ key: string; value: string }> | undefined) ?? []),
+                { key: "_sparklayer_payment_link", value: link.body.token },
+              ],
+            },
+          },
+        });
+      } catch (err) {
+        console.error("[checkout] could not stamp payment link on the draft order", err);
+      }
+
+      return new Response(
+        JSON.stringify({
+          paymentLinkSent: {
+            id: link.body.id,
+            sentTo: link.body.emailMasked,
+            amount: link.body.amount,
+            currency: link.body.currency,
+            expiresAt: link.body.expiresAt,
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -691,4 +1147,70 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       headers: { "Content-Type": "application/json" },
     });
   }
+};
+
+const jsonResponse = (body: unknown, status: number, extraHeaders: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...extraHeaders },
+  });
+
+// Makes checkout safe to retry (spec §7.1, §12): a double click, a slow
+// network or a "did it go through?" retry carries the same idempotency key,
+// so it gets the first attempt's answer instead of creating a second draft
+// order. Requests without a key (older storefront scripts) run as before.
+// If the idempotency store can't be reached the checkout still proceeds,
+// unprotected, rather than blocking every order on a bookkeeping outage.
+export const action = async (args: ActionFunctionArgs) => {
+  const { request } = args;
+  if (request.method !== "POST") return handleCheckout(args);
+
+  const payload = await request.clone().json().catch(() => null);
+  const key = typeof payload?.idempotencyKey === "string" ? payload.idempotencyKey.trim() : "";
+  if (!key) return handleCheckout(args);
+
+  const { session } = await authenticate.public.appProxy(request.clone());
+  if (!session) return handleCheckout(args);
+
+  const shopper = new URL(request.url).searchParams.get("logged_in_customer_id") ?? "guest";
+  const claim = { shop: session.shop, scope: `checkout:${shopper}`, key };
+  // The key itself isn't part of what makes two requests "the same".
+  const content = { ...payload };
+  delete content.idempotencyKey;
+
+  const begun = await beginOperation(claim, content);
+  if (!begun) return handleCheckout(args);
+
+  if (begun.state === "replay") {
+    return jsonResponse(begun.response.body, begun.response.status, { "Idempotent-Replayed": "true" });
+  }
+  if (begun.state === "in_progress") {
+    return jsonResponse(
+      { error: "This checkout is already being processed. Please wait a moment.", code: "IDEMPOTENCY_IN_PROGRESS" },
+      409,
+    );
+  }
+  if (begun.state === "conflict") {
+    return jsonResponse(
+      { error: "This checkout was already started with different details. Please try again.", code: "IDEMPOTENCY_CONFLICT" },
+      409,
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await handleCheckout(args);
+  } catch (error) {
+    await releaseOperation(claim);
+    throw error;
+  }
+
+  if (response.ok) {
+    const body = await response.clone().json().catch(() => null);
+    await completeOperation(claim, { status: response.status, body });
+  } else {
+    await releaseOperation(claim);
+  }
+
+  return response;
 };

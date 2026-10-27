@@ -10,8 +10,27 @@
      data-order-detail-proxy-url="/apps/sparklayer/order-detail"
      data-orders-proxy-url="/apps/sparklayer/orders"
      data-variant-pricing-proxy-url="/apps/sparklayer/variant-pricing"
+     data-agent-session-proxy-url="/apps/sparklayer/agent-session"
+     data-agent-addresses-proxy-url="/apps/sparklayer/agent-addresses"
+     data-agent-cart-proxy-url="/apps/sparklayer/agent-cart"
      data-agent-context-proxy-url="/apps/sparklayer/agent-context"
      data-agent-search-proxy-url="/apps/sparklayer/agent-search"
+     data-agent-dashboard-proxy-url="/apps/sparklayer/agent-dashboard"
+     data-agent-override-proxy-url="/apps/sparklayer/agent-override"
+     data-agent-approvals-proxy-url="/apps/sparklayer/agent-approvals"
+     data-agent-quote-proxy-url="/apps/sparklayer/agent-quotes"
+     data-agent-quote-approvals-proxy-url="/apps/sparklayer/agent-quote-approvals"
+     data-agent-payment-links-proxy-url="/apps/sparklayer/agent-payment-links"
+     data-agent-new-customer-proxy-url="/apps/sparklayer/agent-new-customer"
+     data-quick-order-proxy-url="/apps/sparklayer/quick-order"
+     data-shopping-lists-proxy-url="/apps/sparklayer/shopping-lists"
+     data-agent-notifications-proxy-url="/apps/sparklayer/agent-notifications"
+     data-reorder-proxy-url="/apps/sparklayer/reorder"
+     data-agent-summary-proxy-url="/apps/sparklayer/agent-summary"
+     data-agent-pins-proxy-url="/apps/sparklayer/agent-pins"
+     data-agent-delegations-proxy-url="/apps/sparklayer/agent-delegations"
+     data-agent-offline-proxy-url="/apps/sparklayer/agent-offline"
+     data-customer-quote-proxy-url="/apps/sparklayer/customer-quotes"
      data-customer-id="{% if customer %}{{ customer.id }}{% endif %}"
      data-has-customer="{% if customer %}true{% else %}false{% endif %}"
      data-customer-email="{% if customer %}{{ customer.email }}{% endif %}"
@@ -122,10 +141,8 @@
 {% endif %}
 
 <link rel="stylesheet" href="{{ 'cart-drawer.css' | asset_url }}">
+<script src="{{ 'zxing.min.js' | asset_url }}" defer></script>
 <script src="{{ 'cart-drawer.js' | asset_url }}" defer></script>
-
-<link rel="stylesheet" href="{{ 'agent-bar.css' | asset_url }}">
-<script src="{{ 'agent-bar.js' | asset_url }}" defer></script>
 
 {% schema %}
 {

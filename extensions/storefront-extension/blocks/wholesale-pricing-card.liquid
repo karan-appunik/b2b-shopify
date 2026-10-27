@@ -25,22 +25,81 @@
     id="sparklayer-wholesale-pricing-card-{{ section.id }}-{{ block.id }}"
     class="sparklayer-wholesale-pricing sl-wsp-card"
     data-money-format="{{ shop.money_format | strip_html }}"
-    data-currency="{{ cart.currency.iso_code }}"
+    data-currency="{{ localization.country.currency.iso_code | default: cart.currency.iso_code }}"
+    data-currency-symbol="{{ localization.country.currency.symbol | default: cart.currency.symbol | default: '$' }}"
     data-i18n-add-to-cart="{{ 'wholesalePricing.addToCart' | t }}"
     data-i18n-add-with-price="{{ 'wholesalePricing.addWithPrice' | t }}"
     data-i18n-sold-out="{{ 'wholesalePricing.soldOut' | t }}"
     {{ block.shopify_attributes }}
   >
     {% if customer.b2b? %}
+      {% liquid
+        assign active_curr = localization.country.currency.iso_code | default: cart.currency.iso_code | downcase
+        assign active_curr_symbol = localization.country.currency.symbol | default: cart.currency.symbol | default: '$'
+        if active_curr == 'eur'
+          assign active_curr_symbol = '€'
+        elsif active_curr == 'gbp'
+          assign active_curr_symbol = '£'
+        elsif active_curr == 'cad'
+          assign active_curr_symbol = 'CA$'
+        elsif active_curr == 'aud'
+          assign active_curr_symbol = 'AU$'
+        elsif active_curr == 'usd'
+          assign active_curr_symbol = '$'
+        endif
+      %}
       <script type="application/json" data-sl-variants>
         [
           {% for variant in sl_product.variants %}
             {% liquid
-              assign wsp = variant.metafields.sparklayer.wholesale_price.value
+              assign curr_wsp_key = 'wholesale_price_' | append: active_curr
+              assign curr_wsp = variant.metafields.sparklayer[curr_wsp_key].value
+              assign wsp = curr_wsp | default: variant.metafields.sparklayer.wholesale_price.value
               if wsp
                 assign row_price_cents = wsp | times: 100 | round
               else
                 assign row_price_cents = variant.price
+              endif
+
+              assign raw_msrp = variant.metafields.sparklayer.msrp.value | default: variant.metafields.custom.msrp.value | default: variant.metafields.sparklayer.rrp.value | default: variant.metafields.custom.rrp.value | default: sl_product.metafields.sparklayer.msrp.value | default: sl_product.metafields.custom.msrp.value
+              assign matched_msrp = null
+
+              if raw_msrp != blank
+                for item in raw_msrp
+                  assign item_curr = item.currency_code | downcase
+                  if item_curr == active_curr
+                    assign matched_msrp = item.value
+                    break
+                  endif
+                endfor
+                if matched_msrp == null
+                  for item in raw_msrp
+                    assign item_curr = item.currency_code | downcase
+                    if item_curr == 'usd'
+                      assign matched_msrp = item.value
+                      break
+                    endif
+                  endfor
+                endif
+                if matched_msrp == null
+                  for item in raw_msrp
+                    if item.value
+                      assign matched_msrp = item.value
+                      break
+                    endif
+                  endfor
+                endif
+                if matched_msrp == null and raw_msrp.value
+                  assign matched_msrp = raw_msrp.value
+                elsif matched_msrp == null and raw_msrp > 0
+                  assign matched_msrp = raw_msrp
+                endif
+              endif
+
+              if matched_msrp
+                assign card_msrp_cents = matched_msrp | times: 100 | round
+              else
+                assign card_msrp_cents = null
               endif
             %}
             {
@@ -50,6 +109,8 @@
               "wsp": {{ wsp | default: null | json }},
               "compareAtPrice": {{ variant.compare_at_price | default: null | json }},
               "nativePrice": {{ variant.price | json }},
+              "customMsrp": {{ card_msrp_cents | default: null | json }},
+              "msrpRaw": {{ raw_msrp | json }},
               "available": {{ variant.available | json }},
               "tiers": {{ variant.metafields.sparklayer.wholesale_price_tiers.value | default: "[]" }}
             }{% unless forloop.last %},{% endunless %}
@@ -57,13 +118,66 @@
         ]
       </script>
 
+      {% liquid
+        assign card_curr_wsp_key = 'wholesale_price_' | append: active_curr
+        assign card_sl_wsp = sl_variant.metafields.sparklayer[card_curr_wsp_key].value | default: sl_variant.metafields.sparklayer.wholesale_price.value
+        assign sl_raw_msrp = sl_variant.metafields.sparklayer.msrp.value | default: sl_variant.metafields.custom.msrp.value | default: sl_variant.metafields.sparklayer.rrp.value | default: sl_variant.metafields.custom.rrp.value | default: sl_product.metafields.sparklayer.msrp.value | default: sl_product.metafields.custom.msrp.value
+        assign sl_matched_msrp = null
+        if sl_raw_msrp != blank
+          for item in sl_raw_msrp
+            assign item_curr = item.currency_code | downcase
+            if item_curr == active_curr
+              assign sl_matched_msrp = item.value
+              break
+            endif
+          endfor
+          if sl_matched_msrp == null
+            for item in sl_raw_msrp
+              assign item_curr = item.currency_code | downcase
+              if item_curr == 'usd'
+                assign sl_matched_msrp = item.value
+                break
+              endif
+            endfor
+          endif
+          if sl_matched_msrp == null
+            for item in sl_raw_msrp
+              if item.value
+                assign sl_matched_msrp = item.value
+                break
+              endif
+            endfor
+          endif
+          if sl_matched_msrp == null and sl_raw_msrp.value
+            assign sl_matched_msrp = sl_raw_msrp.value
+          elsif sl_matched_msrp == null and sl_raw_msrp > 0
+            assign sl_matched_msrp = sl_raw_msrp
+          endif
+        endif
+        if sl_matched_msrp
+          assign sl_msrp_cents = sl_matched_msrp | times: 100 | round
+        else
+          assign sl_msrp_cents = null
+        endif
+      %}
+
       <div class="sl-wsp-price sl-wsp-card-price" data-sl-price>
-        {% if sl_variant.metafields.sparklayer.wholesale_price.value %}
-          <span class="sl-wsp-price-wsp" data-sl-price-primary>{{ 'wholesalePricing.wspPrefix' | t }}{{ sl_variant.metafields.sparklayer.wholesale_price.value | times: 100 | money }}</span>
-          <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ sl_variant.price | money }}</span>
+        {% if card_sl_wsp %}
+          <span class="sl-wsp-price-wsp" data-sl-price-primary>{{ 'wholesalePricing.wspPrefix' | t }}{{ card_sl_wsp | times: 100 | money }}</span>
+          {% if sl_msrp_cents %}
+            {% assign card_msrp_dollars = sl_msrp_cents | divided_by: 100 %}
+            {% assign card_msrp_rem = sl_msrp_cents | modulo: 100 | prepend: '00' | slice: -2, 2 %}
+            <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ active_curr_symbol }}{{ card_msrp_dollars }}.{{ card_msrp_rem }}</span>
+          {% else %}
+            <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ sl_variant.price | money }}</span>
+          {% endif %}
         {% else %}
           <span class="sl-wsp-price-wsp" data-sl-price-primary>{{ sl_variant.price | money }}</span>
-          {% if sl_variant.compare_at_price > sl_variant.price %}
+          {% if sl_msrp_cents %}
+            {% assign card_msrp_dollars = sl_msrp_cents | divided_by: 100 %}
+            {% assign card_msrp_rem = sl_msrp_cents | modulo: 100 | prepend: '00' | slice: -2, 2 %}
+            <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ active_curr_symbol }}{{ card_msrp_dollars }}.{{ card_msrp_rem }}</span>
+          {% elsif sl_variant.compare_at_price > sl_variant.price %}
             <span class="sl-wsp-price-msrp" data-sl-price-secondary>{{ 'wholesalePricing.msrp' | t }}: {{ sl_variant.compare_at_price | money }}</span>
           {% else %}
             <span class="sl-wsp-price-msrp" data-sl-price-secondary style="display:none;"></span>

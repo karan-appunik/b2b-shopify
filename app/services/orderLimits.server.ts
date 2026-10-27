@@ -15,6 +15,8 @@ function getBackendConfig(): { backendUrl: string; internalKey: string } | null 
 export interface OrderLimitPair {
   min: number | null;
   max: number | null;
+  // The order must be a multiple of this (pack size).
+  increment?: number | null;
 }
 
 export interface TotalLimitRow extends OrderLimitPair {
@@ -69,11 +71,15 @@ export function checkOrderLimits(
   totalQuantity: number,
   totalValue: number,
   currency: string,
+  { waiveIncrement = false }: { waiveIncrement?: boolean } = {},
 ): string | null {
   const { quantity, total } = limits;
 
   if (quantity.min != null && totalQuantity < quantity.min) {
     return `Minimum order quantity is ${quantity.min}.`;
+  }
+  if (quantity.increment && !waiveIncrement && totalQuantity % quantity.increment !== 0) {
+    return `Orders must be in multiples of ${quantity.increment}.`;
   }
   if (quantity.max != null && totalQuantity > quantity.max) {
     return `Maximum order quantity is ${quantity.max}.`;

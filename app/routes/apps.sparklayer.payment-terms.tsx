@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { resolveEffectiveCustomerId } from "../services/agentContext.server";
 
 const CUSTOMER_PAYMENT_TERMS = `#graphql
   query CustomerPaymentTerms($customerId: ID!) {
@@ -27,7 +28,7 @@ const CUSTOMER_PAYMENT_TERMS = `#graphql
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const { admin } = await authenticate.public.appProxy(request);
+    const { admin, session } = await authenticate.public.appProxy(request);
 
     const url = new URL(request.url);
     const loggedInCustomerId = url.searchParams.get("logged_in_customer_id");
@@ -38,8 +39,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
     }
 
+    // While a sales agent is ordering for a customer, use that customer's terms.
+    const customerId = session
+      ? await resolveEffectiveCustomerId(session.shop, loggedInCustomerId)
+      : loggedInCustomerId;
+
     const response = await admin.graphql(CUSTOMER_PAYMENT_TERMS, {
-      variables: { customerId: `gid://shopify/Customer/${loggedInCustomerId}` },
+      variables: { customerId: `gid://shopify/Customer/${customerId ?? loggedInCustomerId}` },
     });
     const body = await response.json();
     const profiles = body.data?.customer?.companyContactProfiles || [];

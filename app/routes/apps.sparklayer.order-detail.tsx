@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { resolveEffectiveCustomerId } from "../services/agentContext.server";
 
 const ORDER_DETAIL_QUERY = `#graphql
   query OrderDetail($id: ID!) {
@@ -83,7 +84,7 @@ function friendlyStatus(financial: string | null, fulfillment: string): string {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const { admin } = await authenticate.public.appProxy(request);
+    const { admin, session } = await authenticate.public.appProxy(request);
 
     const url = new URL(request.url);
     const orderId = url.searchParams.get("id");
@@ -109,7 +110,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Only let a customer view their own order.
     const orderCustomerId = order.customer?.id?.split("/").pop();
-    if (orderCustomerId !== loggedInCustomerId) {
+    // (or, for a sales agent ordering for a customer, that customer's order).
+    const effectiveCustomerId = session
+      ? await resolveEffectiveCustomerId(session.shop, loggedInCustomerId)
+      : loggedInCustomerId;
+    if (orderCustomerId !== effectiveCustomerId) {
       return new Response(JSON.stringify({ error: "Not authorized" }), {
         status: 403,
         headers: { "Content-Type": "application/json" },

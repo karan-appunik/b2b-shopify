@@ -44,7 +44,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const variantGids = lineItems.map(
       (item: any) => `gid://shopify/ProductVariant/${item.variantId}`,
     );
-    const pricing = await fetchVariantPricing(admin, variantGids);
+    const pricing = await fetchVariantPricing(admin, variantGids, currency);
     const totalValue = lineItems.reduce((sum: number, item: any) => {
       const variantId = `gid://shopify/ProductVariant/${item.variantId}`;
       const variantPricing = pricing.get(variantId);

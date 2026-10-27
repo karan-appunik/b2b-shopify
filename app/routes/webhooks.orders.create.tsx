@@ -4,6 +4,7 @@ import {
   syncOrderFromWebhookPayload,
   type ShopifyOrderWebhookPayload,
 } from "../services/orderSync.server";
+import { reportIfPaidViaLink } from "../services/paymentLinkReport.server";
 import { recordDiscountRedemptions } from "../services/discountLookup.server";
 import { fireDiscountRedeemedFlowTrigger } from "../services/flowTrigger.server";
 
@@ -15,6 +16,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const orderPayload = payload as ShopifyOrderWebhookPayload;
 
   await syncOrderFromWebhookPayload(shop, orderPayload);
+
+  // An order paid through a payment link: tell the backend so the link is
+  // closed and checked against the amount it asked for.
+  await reportIfPaidViaLink(shop, orderPayload);
 
   // The checkout proxy stashes which discounts it applied as a custom
   // attribute on the draft order rather than recording the redemption

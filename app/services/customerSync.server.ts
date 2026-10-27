@@ -18,6 +18,9 @@ const CUSTOMERS_QUERY = `#graphql
           tags
           defaultAddress {
             company
+            countryCodeV2
+            provinceCode
+            zip
           }
           companyContactProfiles {
             company {
@@ -75,6 +78,8 @@ type CustomerRow = {
   shopifyCompanyName?: string;
   creditLimit?: number | null;
   creditBalance?: number;
+  // Where the default address is, for territory rules.
+  region?: { countryCode?: string; provinceCode?: string; zip?: string };
 };
 
 // The Mongo creditLimit/creditBalance fields are a read-only mirror of
@@ -132,7 +137,7 @@ interface CustomersQueryResponse {
           lastName: string | null;
           email: string | null;
           tags: string[];
-          defaultAddress: { company: string | null } | null;
+          defaultAddress: { company: string | null; countryCodeV2?: string | null; provinceCode?: string | null; zip?: string | null } | null;
           companyContactProfiles: CompanyContactProfile[];
           creditMetafield: { value: string } | null;
         };
@@ -156,7 +161,20 @@ export interface ShopifyCustomerWebhookPayload {
   last_name?: string | null;
   email?: string | null;
   tags?: string | null;
-  default_address?: { company?: string | null } | null;
+  default_address?: { company?: string | null; country_code?: string | null; province_code?: string | null; zip?: string | null } | null;
+}
+
+function regionOf(
+  countryCode: string | null | undefined,
+  provinceCode: string | null | undefined,
+  zip: string | null | undefined,
+): CustomerRow["region"] {
+  if (!countryCode && !provinceCode && !zip) return undefined;
+  return {
+    countryCode: countryCode || undefined,
+    provinceCode: provinceCode || undefined,
+    zip: zip || undefined,
+  };
 }
 
 function customerName(
@@ -184,6 +202,7 @@ async function fetchAllCustomerRows(admin: AdminApiContext): Promise<CustomerRow
         email: customer.email,
         name: customerName(customer.firstName, customer.lastName, customer.email),
         company: customer.defaultAddress?.company || undefined,
+        region: regionOf(customer.defaultAddress?.countryCodeV2, customer.defaultAddress?.provinceCode, customer.defaultAddress?.zip),
         tags: customer.tags || [],
         shopifyCustomerId: customer.id,
         ...firstCompanyInfo(customer.companyContactProfiles),
@@ -318,6 +337,7 @@ export async function syncCustomerFromWebhookPayload(
       email: payload.email,
       name: customerName(payload.first_name, payload.last_name, payload.email),
       company: payload.default_address?.company || undefined,
+      region: regionOf(payload.default_address?.country_code, payload.default_address?.province_code, payload.default_address?.zip),
       tags: payload.tags
         ? payload.tags.split(",").map((t) => t.trim()).filter(Boolean)
         : [],

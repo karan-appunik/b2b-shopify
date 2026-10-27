@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import { reportIfPaidViaLink } from "../services/paymentLinkReport.server";
 import {
   syncOrderFromWebhookPayload,
   type ShopifyOrderWebhookPayload,
@@ -10,7 +11,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  await syncOrderFromWebhookPayload(shop, payload as ShopifyOrderWebhookPayload);
+  const orderPayload = payload as ShopifyOrderWebhookPayload;
+  await syncOrderFromWebhookPayload(shop, orderPayload);
+
+  // An order paid through a payment link: tell the backend so the link is
+  // closed and checked against the amount it asked for.
+  await reportIfPaidViaLink(shop, orderPayload);
 
   return new Response();
 };

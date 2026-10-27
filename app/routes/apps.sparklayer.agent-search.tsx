@@ -27,7 +27,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
     }
 
-    const customers = await searchB2bCustomers(session.shop, q);
+    const customers = await searchB2bCustomers(session.shop, q, loggedInCustomerId as string);
 
     return new Response(JSON.stringify({ customers }), {
       headers: { "Content-Type": "application/json" },
