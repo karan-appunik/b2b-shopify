@@ -1,3 +1,4 @@
+/* eslint-disable */
 (function () {
   var root = document.getElementById("sparklayer-cart-drawer-root");
   if (!root) return;
@@ -4825,6 +4826,7 @@
         video.srcObject = stream;
         video.play();
 
+        var working = false;
         qoTimer = setInterval(function () {
           if (working) return;
           working = true;

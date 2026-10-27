@@ -3,7 +3,6 @@ import { authenticate } from "../shopify.server";
 import {
   cancelAgentOverride,
   getAgentCart,
-  getAgentOverrides,
   getAgentOverridesWithStatus,
   getAgentSession,
   requestAgentOverride,

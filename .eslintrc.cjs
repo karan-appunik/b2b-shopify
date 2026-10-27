@@ -19,7 +19,7 @@ module.exports = {
     commonjs: true,
     es6: true,
   },
-  ignorePatterns: ["!**/.server", "!**/.client", "check_catalog_locations.js", "debug_sync.js"],
+  ignorePatterns: ["!**/.server", "!**/.client", "check_catalog_locations.js", "debug_sync.js", "**/*.min.js", "extensions/**/assets/*.min.js"],
 
   // Base config
   extends: ["eslint:recommended"],
