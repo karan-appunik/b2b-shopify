@@ -1,11 +1,11 @@
 {% comment %}
   Sitewide wholesale-pricing embed — an App Embed (target: "body"), toggled
   ONCE in the theme editor's "App embeds" panel. Unlike wholesale-pricing.liquid
-  and wholesale-pricing-card.liquid (both target: "section", requiring manual
-  per-section placement), this needs zero placement: once enabled, it injects
+  (target: "section", requiring manual per-section placement), this needs zero
+  placement: once enabled, it injects
   WSP price + variant dropdowns + qty + Add-to-cart into every product-card on
-  every page, EXCEPT the product detail page (which already has its own
-  dedicated wholesale-pricing.liquid buy-box block — no need to duplicate it).
+  every page (the product detail page's own buy-box is the separate
+  wholesale-pricing.liquid block, not a product-card, so it is never duplicated).
 
   Product/variant/WSP data can't come from Liquid `autofill` here (the embed
   doesn't know in advance which products render on a given page), so the
@@ -17,8 +17,12 @@
   Gated to B2B customers only (data-is-b2b), same as the other two blocks.
 {% endcomment %}
 
-{% unless request.page_type == 'product' %}
-  <div
+{% comment %}
+  Also runs on the product page: the main product is not a product-card (it has
+  the wholesale-pricing.liquid block), so only the "You may also like" /
+  recommendation cards are picked up there.
+{% endcomment %}
+<div
     id="sparklayer-wholesale-pricing-embed"
     data-is-b2b="{{ customer.b2b? }}"
     data-storefront-token="{{ shop.metafields.sparklayer.storefront_token.value }}"
@@ -33,7 +37,6 @@
   <link rel="stylesheet" href="{{ 'wholesale-pricing.css' | asset_url }}">
   <link rel="stylesheet" href="{{ 'wholesale-pricing-card.css' | asset_url }}">
   <script src="{{ 'wholesale-pricing-embed.js' | asset_url }}" defer></script>
-{% endunless %}
 
 {% schema %}
 {

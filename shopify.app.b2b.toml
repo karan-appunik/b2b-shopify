@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "ce1d84c1a1f98a976b491723c5e54f4b"
+client_id = "6cb0e0de01b07da05ae26b06d60e3c8d"
 name = "SparkLayer"
 application_url = "https://example.com"
 embedded = true

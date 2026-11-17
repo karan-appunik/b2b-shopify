@@ -62,7 +62,79 @@
     return applicable ? applicable.price : null;
   }
 
+
+  // Copies the storefront theme's own look onto a widget: primary button
+  // colours, page background and text colour. Theme-agnostic: samples computed
+  // styles instead of knowing each theme's CSS variables. (Same helper lives
+  // in wholesale-pricing-embed.js and wholesale-pricing.js.)
+  var themeLook;
+  function isClearColor(color) {
+    return !color || color === "transparent" || /rgba\(.*,\s*0\s*\)$/.test(color) || /\/\s*0\s*\)$/.test(color);
+  }
+  // A sampled button must stand out from the page, or the widget button vanishes
+  // (e.g. a white secondary .btn on a white page).
+  function isVisibleOnPage(color) {
+    var m = color.match(/[0-9.]+/g);
+    if (!m || m.length < 3) return true;
+    var lum = (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) / 255;
+    var page = getComputedStyle(document.body).backgroundColor;
+    var p = isClearColor(page) ? [255, 255, 255] : page.match(/[0-9.]+/g);
+    var pl = (0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]) / 255;
+    // never a near-white button on a light page, and always clearly different from it
+    return Math.abs(lum - pl) > 0.25 && !(pl > 0.5 && lum > 0.75);
+  }
+  function sampleThemeButton() {
+    var selectors = ["button.button--primary", ".button--primary", ".btn--primary", ".btn", ".button", 'button[type="submit"]'];
+    for (var s = 0; s < selectors.length; s++) {
+      var nodes = document.querySelectorAll(selectors[s]);
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (node.closest(".sparklayer-wholesale-pricing, #sparklayer-cart-drawer-root") || !node.getClientRects().length) continue;
+        var cs = getComputedStyle(node);
+        var bg = cs.backgroundColor;
+        if (isClearColor(bg)) {
+          // Some themes paint the button with a gradient, not a background colour.
+          var gradient = (cs.backgroundImage || "").match(/rgba?\([^)]*\)/);
+          bg = gradient ? gradient[0] : null;
+        }
+        if (bg && !isClearColor(bg) && isVisibleOnPage(bg)) return { bg: bg, text: cs.color };
+      }
+    }
+    return null;
+  }
+  function applyThemeLook(root) {
+    if (!themeLook) {
+      var body = getComputedStyle(document.body);
+      themeLook = {
+        button: sampleThemeButton(),
+        fieldBg: isClearColor(body.backgroundColor) ? null : body.backgroundColor,
+        text: body.color
+      };
+    }
+    if (themeLook.button) {
+      root.style.setProperty("--sl-wsp-btn-bg", themeLook.button.bg);
+      root.style.setProperty("--sl-wsp-btn-text", themeLook.button.text);
+    }
+    if (!themeLook.button && themeLook.text) {
+      // no usable theme button: page text colour on page background always contrasts
+      root.style.setProperty("--sl-wsp-btn-bg", themeLook.text);
+      root.style.setProperty("--sl-wsp-btn-text", themeLook.fieldBg || "#fff");
+    }
+    if (themeLook.fieldBg) root.style.setProperty("--sl-wsp-field-bg", themeLook.fieldBg);
+    if (themeLook.text) root.style.setProperty("--sl-wsp-text", themeLook.text);
+  }
+
   function initInstance(root) {
+    // Lets the stylesheet size the widget per theme (e.g. Warehouse fills its info box).
+    var schemaName = window.Shopify && Shopify.theme && Shopify.theme.schema_name;
+    if (schemaName) root.setAttribute("data-sl-theme", String(schemaName).toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+    applyThemeLook(root);
+    var infoCol = root.closest(".product__info-wrapper, .product__info-container, .grid__item");
+    if (infoCol) {
+      infoCol.style.position = "relative";
+      infoCol.style.zIndex = "3";
+    }
+
     var moneyFormat = root.dataset.moneyFormat || "${{amount}}";
     var currencySymbol = root.dataset.currencySymbol || "$";
     var urlParams = new URLSearchParams(window.location.search);
@@ -113,14 +185,15 @@
     // tier price. Passing tierDollars === null means no tier qualifies yet,
     // so it falls back to the real native/compare-at price instead of
     // leaving a wholesale figure that quantity no longer actually gets.
-    function applyPriceDisplay(container, tierDollars, nativeCents, compareAtCents, customMsrpCents) {
+    function applyPriceDisplay(container, tierDollars, nativeCents, compareAtCents, customMsrpCents, isSummary) {
       if (!container) return;
       var wspEl = container.querySelector(".sl-wsp-price-wsp");
       var msrpEl = container.querySelector(".sl-wsp-price-msrp");
+      var prefix = isSummary ? wspPrefix : "";
 
       if (tierDollars != null) {
         var tierCents = Math.round(tierDollars * 100);
-        if (wspEl) wspEl.textContent = wspPrefix + formatMoney(tierCents, moneyFormat);
+        if (wspEl) wspEl.textContent = prefix + formatMoney(tierCents, moneyFormat);
         if (msrpEl) {
           if (customMsrpCents != null && customMsrpCents > 0) {
             msrpEl.textContent = msrpPrefix + ": " + formatCustom(customMsrpCents, currencySymbol);
@@ -132,7 +205,7 @@
         return tierCents;
       }
 
-      if (wspEl) wspEl.textContent = formatMoney(nativeCents, moneyFormat);
+      if (wspEl) wspEl.textContent = prefix + formatMoney(nativeCents, moneyFormat);
       if (msrpEl) {
         if (customMsrpCents != null && customMsrpCents > 0) {
           msrpEl.textContent = msrpPrefix + ": " + formatCustom(customMsrpCents, currencySymbol);
@@ -163,11 +236,11 @@
       var customMsrpCents = input.dataset.msrpPrice ? Number(input.dataset.msrpPrice) : null;
 
       var row = input.closest("tr");
-      var effectiveCents = applyPriceDisplay(row, tierDollars, nativeCents, compareAtCents, customMsrpCents);
+      var effectiveCents = applyPriceDisplay(row, tierDollars, nativeCents, compareAtCents, customMsrpCents, false);
       input.dataset.variantPrice = String(effectiveCents);
 
       if (summaryEl && variantId === summaryVariantId) {
-        applyPriceDisplay(summaryEl, tierDollars, nativeCents, compareAtCents, customMsrpCents);
+        applyPriceDisplay(summaryEl, tierDollars, nativeCents, compareAtCents, customMsrpCents, true);
       }
     }
 
@@ -284,41 +357,58 @@
       }
     }
 
+    var wishlistBtn = root.querySelector("[data-sl-wishlist]");
+    if (wishlistBtn) {
+      wishlistBtn.addEventListener("click", function () {
+        var isAdded = wishlistBtn.classList.toggle("is-active");
+        var icon = wishlistBtn.querySelector("svg");
+        if (icon) {
+          icon.setAttribute("fill", isAdded ? "currentColor" : "none");
+        }
+        document.dispatchEvent(new CustomEvent("sparklayer:wishlist:toggle", { detail: { productId: root.id } }));
+      });
+    }
+
     updateTotal();
     initImagePreview(root);
   }
 
-  // Floats a single shared preview image outside the table entirely (fixed
-  // to the viewport, positioned to the left of the whole widget) instead of
-  // an absolutely-positioned tooltip, which would get clipped by the table's
-  // own horizontal-scroll container.
+  // Floats a single shared preview image on the left of the table card,
+  // vertically aligned with whichever variant row is currently hovered.
   function initImagePreview(root) {
     var preview = root.querySelector("[data-sl-preview]");
-    var thumbs = root.querySelectorAll("[data-sl-preview-src]");
-    if (!preview || thumbs.length === 0) return;
+    var rows = root.querySelectorAll(".sl-wsp-row[data-sl-preview-src]");
+    var scrollContainer = root.querySelector(".sl-wsp-scroll");
+    var table = root.querySelector(".sl-wsp-table");
+    if (!preview || rows.length === 0) return;
 
-    var GAP = 16;
-    var MARGIN = 10;
+    // Out of the widget's stacking context (it is z-index 1), so theme cards that
+    // paint later (Warehouse's Description box) cannot cover the preview.
+    if (preview.parentNode !== document.body) document.body.appendChild(preview);
+    window.addEventListener("scroll", function () { preview.classList.remove("is-visible"); }, { passive: true });
 
-    function show(thumb) {
-      var src = thumb.dataset.slPreviewSrc;
+    var previewHeight = 120;
+
+    function show(row) {
+      var src = row.dataset.slPreviewSrc;
       if (!src) return;
-      preview.src = src;
+      if (preview.src !== src) {
+        preview.src = src;
+      }
 
       var rootRect = root.getBoundingClientRect();
-      var thumbRect = thumb.getBoundingClientRect();
-      var previewSize = preview.offsetWidth || 120;
+      var rowRect = row.getBoundingClientRect();
+      var h = preview.offsetHeight || previewHeight;
+      var w = preview.offsetWidth || previewHeight;
 
-      var left = rootRect.left - previewSize - GAP;
-      if (left < MARGIN) left = MARGIN;
+      // viewport coordinates: left of the widget, centred on the hovered row
+      var left = rootRect.left - 14 - w;
+      if (left < 8) left = 8;
+      var top = rowRect.top + (rowRect.height / 2) - (h / 2);
+      top = Math.max(8, Math.min(top, window.innerHeight - h - 8));
 
-      var top = thumbRect.top + thumbRect.height / 2 - previewSize / 2;
-      var maxTop = window.innerHeight - previewSize - MARGIN;
-      if (top < MARGIN) top = MARGIN;
-      if (top > maxTop) top = Math.max(MARGIN, maxTop);
-
-      preview.style.left = left + "px";
-      preview.style.top = top + "px";
+      preview.style.setProperty("left", Math.round(left) + "px", "important");
+      preview.style.setProperty("top", Math.round(top) + "px", "important");
       preview.classList.add("is-visible");
     }
 
@@ -326,12 +416,34 @@
       preview.classList.remove("is-visible");
     }
 
-    thumbs.forEach(function (thumb) {
-      thumb.addEventListener("mouseenter", function () { show(thumb); });
-      thumb.addEventListener("mouseleave", hide);
-      thumb.addEventListener("focus", function () { show(thumb); });
-      thumb.addEventListener("blur", hide);
+    rows.forEach(function (row) {
+      row.addEventListener("mouseenter", function () {
+        show(row);
+      });
+      row.addEventListener("mouseleave", function (e) {
+        var related = e.relatedTarget;
+        if (related && related.closest && related.closest(".sl-wsp-row[data-sl-preview-src]")) {
+          return;
+        }
+        hide();
+      });
+      row.addEventListener("focusin", function () {
+        show(row);
+      });
+      row.addEventListener("focusout", function (e) {
+        var related = e.relatedTarget;
+        if (related && related.closest && related.closest(".sl-wsp-row[data-sl-preview-src]")) {
+          return;
+        }
+        hide();
+      });
     });
+
+    if (scrollContainer) {
+      scrollContainer.addEventListener("mouseleave", hide);
+    } else if (table) {
+      table.addEventListener("mouseleave", hide);
+    }
   }
 
   document.querySelectorAll(ROOT_SELECTOR).forEach(initInstance);

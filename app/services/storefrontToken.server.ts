@@ -17,6 +17,7 @@ const SHOP_TOKEN_METAFIELD_QUERY = `#graphql
   query ShopStorefrontTokenMetafield {
     shop {
       id
+      myshopifyDomain
       metafield(namespace: "sparklayer", key: "storefront_token") {
         value
       }
@@ -105,15 +106,41 @@ export async function getStorefrontAccessToken(admin: AdminApiContext): Promise<
   }
 }
 
+// A Storefront token belongs to the app that created it, so a token left on the
+// metafield by a previous (uninstalled or replaced) app answers 401. Probe it.
+async function isTokenRejected(shopDomain: string, token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://${shopDomain}/api/2026-10/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Storefront-Access-Token": token },
+      body: JSON.stringify({ query: "{ shop { name } }" }),
+    });
+    return res.status === 401 || res.status === 403;
+  } catch {
+    return false; // network trouble is not proof the token is bad
+  }
+}
+
+const verifiedShops = new Set<string>();
+
 export async function ensureStorefrontAccessToken(admin: AdminApiContext) {
   try {
     const shopRes = await admin.graphql(SHOP_TOKEN_METAFIELD_QUERY);
     const shopBody = await shopRes.json();
     const shopId = shopBody.data?.shop?.id;
+    const shopDomain = shopBody.data?.shop?.myshopifyDomain;
     const existingValue = shopBody.data?.shop?.metafield?.value;
-    if (existingValue || !shopId) return;
+    if (!shopId) return;
+    if (shopDomain && verifiedShops.has(shopDomain)) return;
+
+    if (existingValue && shopDomain && !(await isTokenRejected(shopDomain, existingValue))) {
+      verifiedShops.add(shopDomain);
+      return;
+    }
+    if (existingValue && !shopDomain) return;
 
     await createAndStoreToken(admin, shopId);
+    if (shopDomain) verifiedShops.add(shopDomain);
   } catch (error) {
     console.error("ensureStorefrontAccessToken failed:", error);
   }
