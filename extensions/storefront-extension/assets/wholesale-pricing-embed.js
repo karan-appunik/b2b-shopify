@@ -1,8 +1,13 @@
 (function () {
-  var CARD_SELECTOR = "product-card";
+  // <product-card> (Horizon-type, carries data-product-id), Dawn-family
+  // .product-card-wrapper and Broadcast's <grid-item class="product-item">
+  // (the last two have no product id on the element; resolved by handle).
+  // Warehouse's card is <div class="product-item product-item--vertical">.
+  var CARD_SELECTOR = "product-card, .product-card-wrapper, grid-item.product-item, div.product-item, .grid-product";
   var STOREFRONT_API_VERSION = "2026-10";
 
   var configEl = document.getElementById("sparklayer-wholesale-pricing-embed");
+
   if (!configEl) return;
 
   var isB2B = configEl.dataset.isB2b === "true";
@@ -45,9 +50,15 @@
     return id ? "gid://shopify/Product/" + id : null;
   }
 
-  var PRODUCT_QUERY =
-    "query ProductById($id: ID!) {" +
-    "  product(id: $id) {" +
+  // Dawn-family cards have no product id on the element, only the link.
+  function extractHandle(card) {
+    var link = card.querySelector('a[href*="/products/"]');
+    if (!link) return null;
+    var match = (link.getAttribute("href") || "").match(/\/products\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  var PRODUCT_FIELDS =
     "    options { name values }" +
     "    variants(first: 100) {" +
     "      nodes {" +
@@ -59,18 +70,27 @@
     "        wsp: metafield(namespace: \"sparklayer\", key: \"wholesale_price\") { value }" +
     "        tiers: metafield(namespace: \"sparklayer\", key: \"wholesale_price_tiers\") { value }" +
     "      }" +
-    "    }" +
-    "  }" +
-    "}";
+    "    }";
+
+  var PRODUCT_QUERY = "query ProductById($id: ID!) { product(id: $id) {" + PRODUCT_FIELDS + "} }";
+  var PRODUCT_BY_HANDLE_QUERY = "query ProductByHandle($handle: String!) { product: productByHandle(handle: $handle) {" + PRODUCT_FIELDS + "} }";
 
   function fetchProduct(productId) {
+    return fetchProductWith(PRODUCT_QUERY, { id: productId });
+  }
+
+  function fetchProductByHandle(handle) {
+    return fetchProductWith(PRODUCT_BY_HANDLE_QUERY, { handle: handle });
+  }
+
+  function fetchProductWith(query, variables) {
     return fetch("https://" + shopDomain + "/api/" + STOREFRONT_API_VERSION + "/graphql.json", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Shopify-Storefront-Access-Token": storefrontToken,
       },
-      body: JSON.stringify({ query: PRODUCT_QUERY, variables: { id: productId } }),
+      body: JSON.stringify({ query: query, variables: variables }),
     })
       .then(function (res) {
         return res.json();
@@ -118,9 +138,72 @@
       });
   }
 
+
+  // Copies the storefront theme's own look onto a widget: primary button
+  // colours, page background and text colour. Theme-agnostic: samples computed
+  // styles instead of knowing each theme's CSS variables. (Same helper lives
+  // in wholesale-pricing-embed.js and wholesale-pricing.js.)
+  var themeLook;
+  function isClearColor(color) {
+    return !color || color === "transparent" || /rgba\(.*,\s*0\s*\)$/.test(color) || /\/\s*0\s*\)$/.test(color);
+  }
+  // A sampled button must stand out from the page, or the widget button vanishes
+  // (e.g. a white secondary .btn on a white page).
+  function isVisibleOnPage(color) {
+    var m = color.match(/[0-9.]+/g);
+    if (!m || m.length < 3) return true;
+    var lum = (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) / 255;
+    var page = getComputedStyle(document.body).backgroundColor;
+    var p = isClearColor(page) ? [255, 255, 255] : page.match(/[0-9.]+/g);
+    var pl = (0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]) / 255;
+    // never a near-white button on a light page, and always clearly different from it
+    return Math.abs(lum - pl) > 0.25 && !(pl > 0.5 && lum > 0.75);
+  }
+  function sampleThemeButton() {
+    var selectors = ["button.button--primary", ".button--primary", ".btn--primary", ".btn", ".button", 'button[type="submit"]'];
+    for (var s = 0; s < selectors.length; s++) {
+      var nodes = document.querySelectorAll(selectors[s]);
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (node.closest(".sparklayer-wholesale-pricing, #sparklayer-cart-drawer-root") || !node.getClientRects().length) continue;
+        var cs = getComputedStyle(node);
+        var bg = cs.backgroundColor;
+        if (isClearColor(bg)) {
+          // Some themes paint the button with a gradient, not a background colour.
+          var gradient = (cs.backgroundImage || "").match(/rgba?\([^)]*\)/);
+          bg = gradient ? gradient[0] : null;
+        }
+        if (bg && !isClearColor(bg) && isVisibleOnPage(bg)) return { bg: bg, text: cs.color };
+      }
+    }
+    return null;
+  }
+  function applyThemeLook(root) {
+    if (!themeLook) {
+      var body = getComputedStyle(document.body);
+      themeLook = {
+        button: sampleThemeButton(),
+        fieldBg: isClearColor(body.backgroundColor) ? null : body.backgroundColor,
+        text: body.color
+      };
+    }
+    if (themeLook.button) {
+      root.style.setProperty("--sl-wsp-btn-bg", themeLook.button.bg);
+      root.style.setProperty("--sl-wsp-btn-text", themeLook.button.text);
+    }
+    if (!themeLook.button && themeLook.text) {
+      // no usable theme button: page text colour on page background always contrasts
+      root.style.setProperty("--sl-wsp-btn-bg", themeLook.text);
+      root.style.setProperty("--sl-wsp-btn-text", themeLook.fieldBg || "#fff");
+    }
+    if (themeLook.fieldBg) root.style.setProperty("--sl-wsp-field-bg", themeLook.fieldBg);
+    if (themeLook.text) root.style.setProperty("--sl-wsp-text", themeLook.text);
+  }
+
   function buildCardWidget(product) {
     var root = document.createElement("div");
     root.className = "sparklayer-wholesale-pricing sl-wsp-card sl-wsp-embed";
+    applyThemeLook(root);
 
     var priceEl = document.createElement("div");
     priceEl.className = "sl-wsp-price sl-wsp-card-price";
@@ -151,7 +234,22 @@
         opt.textContent = value;
         select.appendChild(opt);
       });
-      wrap.appendChild(select);
+      // A closed <select> shows its value on one line and cuts long names off.
+      // The visible text is this wrapping box; the real select sits transparent
+      // on top of it, so a click still opens the native dropdown.
+      var field = document.createElement("div");
+      field.className = "sl-wsp-option-field";
+      var display = document.createElement("div");
+      display.className = "sl-wsp-option-display";
+      display.setAttribute("aria-hidden", "true");
+      function syncDisplay() {
+        display.textContent = select.value;
+      }
+      select.addEventListener("change", syncDisplay);
+      syncDisplay();
+      field.appendChild(display);
+      field.appendChild(select);
+      wrap.appendChild(field);
       root.appendChild(wrap);
       selects.push(select);
     });
@@ -281,14 +379,13 @@
       addButton.setAttribute("aria-busy", "true");
 
       // Dispatch native Shopify cart lines update event so the theme cart drawer opens/updates
-      var deferredEventPromise = {
-        resolve: function() {},
-        reject: function() {},
-        promise: new Promise(function(resolve, reject) {
-          deferredEventPromise.resolve = resolve;
-          deferredEventPromise.reject = reject;
-        })
-      };
+      var deferredEventPromise = { resolve: function() {}, reject: function() {} };
+      deferredEventPromise.promise = new Promise(function(resolve, reject) {
+        deferredEventPromise.resolve = resolve;
+        deferredEventPromise.reject = reject;
+      });
+      // Themes that don't listen for the event never settle or catch it.
+      deferredEventPromise.promise.catch(function() {});
 
       // Construct the event extending CustomEvent with writable and configurable properties
       var event = new CustomEvent('shopify:cart:lines-update', {
@@ -360,25 +457,49 @@
   function injectInto(card, product) {
     if (card.querySelector(".sl-wsp-embed")) return; // already injected
     var widget = buildCardWidget(product);
-    card.appendChild(widget);
-
-    // Hide native price element
-    var priceEl = card.querySelector("product-price, .price, .product-card__price");
-    if (priceEl) {
-      priceEl.style.display = "none";
+    // Prestige's <product-card> is a grid, so a widget appended to the card lands
+    // on top of the title. There it goes into the info block, right after the
+    // price. Other themes keep the append that already works for them.
+    var anchor = needsInfoPlacement() ? findNativePrice(card) : null;
+    if (anchor && anchor.parentElement) {
+      anchor.parentElement.insertBefore(widget, anchor.nextSibling);
+    } else {
+      card.appendChild(widget);
     }
+    delete card.dataset.slWspBusy;
 
-    // Hide native variant picker
-    var pickerEl = card.querySelector("variant-picker, .variant-picker, [data-variant-picker]");
-    if (pickerEl) {
-      pickerEl.style.display = "none";
-    }
+    // Hide the theme's own price, variant picker and buy / quick-add buttons
+    // (everything that matches, but never our own widget).
+    hideNative(card, NATIVE_PRICE_SELECTOR);
+    hideNative(card, "variant-picker, .variant-picker, [data-variant-picker], fieldset:has(.color-swatch), .color-swatch");
+    hideNative(card, "buy-buttons, .buy-buttons, .product-form-buttons, product-form-component, .buy-buttons-block, .quick-add, [class*='quick-add' i], [class*='quickbuy' i], [class*='quick-buy' i], .quick-product__btn, [class*='quick-form' i], .grid-product__color-swatch, .grid-product__colors, [class*='swatch' i]");
+  }
 
-    // Hide native buy buttons
-    var buttonsEl = card.querySelector("buy-buttons, .buy-buttons, .product-form-buttons, product-form-component, .buy-buttons-block");
-    if (buttonsEl) {
-      buttonsEl.style.display = "none";
+  var NATIVE_PRICE_SELECTOR = "product-price, price-list, .price-list, .price, .product-card__price, .product-price, .product-item__price, .grid-product__price";
+
+  function isPrestige() {
+    return !!(window.Shopify && Shopify.theme && Shopify.theme.schema_name === "Prestige");
+  }
+
+  // Warehouse's card is a block with an info column (.product-item__info), so the
+  // widget goes there, right after the price, instead of at the card's end.
+  function needsInfoPlacement() {
+    return isPrestige() || !!(window.Shopify && Shopify.theme && Shopify.theme.schema_name === "Warehouse");
+  }
+
+  function findNativePrice(card) {
+    var matches = card.querySelectorAll(NATIVE_PRICE_SELECTOR);
+    for (var i = 0; i < matches.length; i++) {
+      if (!matches[i].closest(".sl-wsp-embed")) return matches[i];
     }
+    return null;
+  }
+
+  function hideNative(card, selector) {
+    card.querySelectorAll(selector).forEach(function (el) {
+      if (el.closest(".sl-wsp-embed")) return;
+      el.style.display = "none";
+    });
   }
 
   function run() {
@@ -386,7 +507,15 @@
     if (cards.length === 0) return;
 
     var byProductId = {};
+    var byHandle = {};
     cards.forEach(function (card) {
+      // Header menus, the footer and the cart drawer reuse the card markup (mega
+      // menu product lists, cart recommendations), so leave those alone.
+      if (card.closest("header, footer, .mega-menu, #mini-cart, #sparklayer-cart-drawer-root")) return;
+      // run() repeats as the page adds cards, so skip ones already done or queued.
+      if (card.querySelector(".sl-wsp-embed") || card.dataset.slWspBusy) return;
+      card.dataset.slWspBusy = "1";
+
       if (card.dataset.slVariants && card.dataset.slOptions) {
         try {
           var variants = JSON.parse(card.dataset.slVariants);
@@ -405,9 +534,15 @@
       }
 
       var productId = extractProductId(card);
-      if (!productId) return;
-      byProductId[productId] = byProductId[productId] || [];
-      byProductId[productId].push(card);
+      if (productId) {
+        byProductId[productId] = byProductId[productId] || [];
+        byProductId[productId].push(card);
+        return;
+      }
+      var handle = extractHandle(card);
+      if (!handle) return;
+      byHandle[handle] = byHandle[handle] || [];
+      byHandle[handle].push(card);
     });
 
     Object.keys(byProductId).forEach(function (productId) {
@@ -418,11 +553,31 @@
         });
       });
     });
+
+    Object.keys(byHandle).forEach(function (handle) {
+      fetchProductByHandle(handle).then(function (product) {
+        if (!product) return;
+        byHandle[handle].forEach(function (card) {
+          injectInto(card, product);
+        });
+      });
+    });
+  }
+
+  // Cards also arrive after load (Horizon's "You may also like", filtered or
+  // infinite-scrolled grids), so pick up new ones as they are added.
+  function start() {
+    run();
+    var rerunTimer = null;
+    new MutationObserver(function () {
+      if (rerunTimer) clearTimeout(rerunTimer);
+      rerunTimer = setTimeout(run, 250);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", run);
+    document.addEventListener("DOMContentLoaded", start);
   } else {
-    run();
+    start();
   }
 })();

@@ -73,8 +73,6 @@
     recentActivity: root.dataset.i18nRecentActivity,
     viewAll: root.dataset.i18nViewAll,
     noOrdersYet: root.dataset.i18nNoOrdersYet,
-    shoppingLists: root.dataset.i18nShoppingLists,
-    shoppingListsEmpty: root.dataset.i18nShoppingListsEmpty,
     myDetails: root.dataset.i18nMyDetails,
     email: root.dataset.i18nEmail,
     creditLimit: root.dataset.i18nCreditLimit,
@@ -131,7 +129,6 @@
   var agentPaymentLinksProxyUrl = root.dataset.agentPaymentLinksProxyUrl;
   var agentNewCustomerProxyUrl = root.dataset.agentNewCustomerProxyUrl;
   var quickOrderProxyUrl = root.dataset.quickOrderProxyUrl;
-  var shoppingListsProxyUrl = root.dataset.shoppingListsProxyUrl;
   var agentNotificationsProxyUrl = root.dataset.agentNotificationsProxyUrl;
   var reorderProxyUrl = root.dataset.reorderProxyUrl;
   var agentSummaryProxyUrl = root.dataset.agentSummaryProxyUrl;
@@ -142,7 +139,54 @@
   var agentOfflineProxyUrl = root.dataset.agentOfflineProxyUrl ||
     (agentSessionProxyUrl ? agentSessionProxyUrl.replace(/agent-session$/, "agent-offline") : undefined);
   var customerQuoteProxyUrl = root.dataset.customerQuoteProxyUrl;
+  var shoppingListsProxyUrl = root.dataset.shoppingListsProxyUrl;
+  var shoppingLists = null; // saved lists of the signed-in customer, newest first; null until loaded
+  var shoppingListMenuId = null; // id of the list whose row "Actions" menu is open (account tab)
+  var listAddedBanner = false; // the green "Items have been successfully added" notice on the cart
+  // Theme cart drawer SparkLayer mounts into. Dawn: <cart-drawer> + .drawer__inner.
+  // Horizon: <cart-drawer-component> whose <dialog> is the sliding panel.
+  var nativeFailed = false; // set when the theme drawer mounts but renders at 0 size
+  function getNativeHost() {
+    if (nativeFailed) return null;
+    var dawn = document.querySelector("cart-drawer");
+    if (dawn) {
+      var dawnInner = dawn.querySelector(".drawer__inner");
+      // Prestige: <cart-drawer> is itself a shadow-DOM dialog (header/footer
+      // slots, panel in ::part), with no .drawer__inner. Light-DOM children land
+      // in its body slot, so the root mounts straight into the element.
+      if (!dawnInner && (dawn.shadowRoot || dawn.querySelector("[slot]"))) {
+        return { kind: "prestige", el: dawn, inner: dawn };
+      }
+      // Dawn-family drawers contain #CartDrawer* ids. A <cart-drawer> with a
+      // .drawer__inner panel but no such ids (Broadcast) opens through its own
+      // classes, not Dawn's .active, so it must not get Dawn's visibility rules.
+      if (dawnInner && !dawn.querySelector('[id^="CartDrawer"]')) {
+        return { kind: "inner", el: dawn, inner: dawnInner };
+      }
+      return { kind: "dawn", el: dawn, inner: dawnInner };
+    }
+    var horizon = document.querySelector("cart-drawer-component");
+    // The <dialog> wraps the component (theme-drawer > dialog > cart-drawer-component).
+    if (horizon) return { kind: "horizon", el: horizon, inner: horizon.closest("dialog") || horizon.querySelector("dialog") };
+    // Impulse: the #CartDrawer div is itself the sliding panel (it gets .drawer--is-open).
+    var impulse = document.getElementById("CartDrawer");
+    if (impulse && impulse.classList.contains("drawer")) return { kind: "impulse", el: impulse, inner: impulse };
+    // Warehouse: <form id="mini-cart" class="mini-cart"> is a small header dropdown
+    // (open when aria-hidden="false"). CSS turns it into the same side panel the
+    // other themes get; the theme's own toggle still opens and closes it.
+    var warehouse = document.getElementById("mini-cart");
+    if (warehouse && warehouse.classList.contains("mini-cart")) return { kind: "warehouse", el: warehouse, inner: warehouse };
+    return null;
+  }
+  function isNativeDawnActive() {
+    return !!getNativeHost();
+  }
+  if (!isNativeDawnActive()) {
+    root.classList.remove("sl-native-mode");
+  }
   var wholesalePricing = {}; // variant_id (string) -> { price, tiers: [{minQuantity, price}] } in cents
+  var wholesalePricingAt = {}; // variant_id (string) -> when its price was last fetched
+  var pricingPending = false; // lines are drawn but their wholesale prices are still loading
 
   // Picks the price for the highest tier whose minQuantity the given
   // quantity still qualifies for (tiers must be sorted ascending).
@@ -238,31 +282,34 @@
   }
 
   var ICON_BAG =
-    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">' +
-    '<path d="M5.5 7.5h9l.6 9.2a1 1 0 0 1-1 1.1H5.9a1 1 0 0 1-1-1.1l.6-9.2Z" stroke-linejoin="round"/>' +
-    '<path d="M7.25 7.5V6a2.75 2.75 0 0 1 5.5 0v1.5" stroke-linecap="round"/>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24" height="24">' +
+    '<path stroke-linecap="round" stroke-linejoin="round" d="M15.8 10.5V6a3.8 3.8 0 1 0-7.6 0v4.5m11.4-2 1.3 12c0 .7-.5 1.2-1.1 1.2H4.2a1.1 1.1 0 0 1-1-1.2l1.2-12a1.1 1.1 0 0 1 1.1-1h13c.6 0 1 .4 1.1 1zm-11 2a.4.4 0 1 1-.7 0 .4.4 0 0 1 .7 0zm7.5 0a.4.4 0 1 1-.7 0 .4.4 0 0 1 .7 0z"/>' +
     "</svg>";
   var ICON_USER =
-    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">' +
-    '<circle cx="10" cy="6.5" r="3.25"/>' +
-    '<path d="M3.5 17c.9-3.4 3.7-5.25 6.5-5.25S15.6 13.6 16.5 17" stroke-linecap="round"/>' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">' +
+    '<path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.5 20.12a7.5 7.5 0 0 1 15 0 17.93 17.93 0 0 1-15 0Z"/>' +
     "</svg>";
   var ICON_EXPAND =
-    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">' +
-    '<path d="M7.5 3.5h-3a1 1 0 0 0-1 1v3M12.5 3.5h3a1 1 0 0 1 1 1v3M7.5 16.5h-3a1 1 0 0 1-1-1v-3M12.5 16.5h3a1 1 0 0 0 1-1v-3" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M9.29 13.29L4 18.59V17C4 16.7348 3.89464 16.4804 3.70711 16.2929C3.51957 16.1054 3.26522 16 3 16C2.73478 16 2.48043 16.1054 2.29289 16.2929C2.10536 16.4804 2 16.7348 2 17V21C2.00158 21.1307 2.02876 21.2598 2.08 21.38C2.18147 21.6243 2.37565 21.8185 2.62 21.92C2.74022 21.9712 2.86932 21.9984 3 22H7C7.26522 22 7.51957 21.8946 7.70711 21.7071C7.89464 21.5196 8 21.2652 8 21C8 20.7348 7.89464 20.4804 7.70711 20.2929C7.51957 20.1054 7.26522 20 7 20H5.41L10.71 14.71C10.8983 14.5217 11.0041 14.2663 11.0041 14C11.0041 13.7337 10.8983 13.4783 10.71 13.29C10.5217 13.1017 10.2663 12.9959 10 12.9959C9.7337 12.9959 9.4783 13.1017 9.29 13.29V13.29ZM5.41 4H7C7.26522 4 7.51957 3.89464 7.70711 3.70711C7.89464 3.51957 8 3.26522 8 3C8 2.73478 7.89464 2.48043 7.70711 2.29289C7.51957 2.10536 7.26522 2 7 2H3C2.86932 2.00158 2.74022 2.02876 2.62 2.08C2.37565 2.18147 2.18147 2.37565 2.08 2.62C2.02876 2.74022 2.00158 2.86932 2 3V7C2 7.26522 2.10536 7.51957 2.29289 7.70711C2.48043 7.89464 2.73478 8 3 8C3.26522 8 3.51957 7.89464 3.70711 7.70711C3.89464 7.51957 4 7.26522 4 7V5.41L9.29 10.71C9.38296 10.8037 9.49356 10.8781 9.61542 10.9289C9.73728 10.9797 9.86799 11.0058 10 11.0058C10.132 11.0058 10.2627 10.9797 10.3846 10.9289C10.5064 10.8781 10.617 10.8037 10.71 10.71C10.8037 10.617 10.8781 10.5064 10.9289 10.3846C10.9797 10.2627 11.0058 10.132 11.0058 10C11.0058 9.86799 10.9797 9.73728 10.9289 9.61542C10.8781 9.49356 10.8037 9.38296 10.71 9.29L5.41 4ZM21 16C20.7348 16 20.4804 16.1054 20.2929 16.2929C20.1054 16.4804 20 16.7348 20 17V18.59L14.71 13.29C14.5217 13.1017 14.2663 12.9959 14 12.9959C13.7337 12.9959 13.4783 13.1017 13.29 13.29C13.1017 13.4783 12.9959 13.7337 12.9959 14C12.9959 14.2663 13.1017 14.5217 13.29 14.71L18.59 20H17C16.7348 20 16.4804 20.1054 16.2929 20.2929C16.1054 20.4804 16 20.7348 16 21C16 21.2652 16.1054 21.5196 16.2929 21.7071C16.4804 21.8946 16.7348 22 17 22H21C21.1307 21.9984 21.2598 21.9712 21.38 21.92C21.6243 21.8185 21.8185 21.6243 21.92 21.38C21.9712 21.2598 21.9984 21.1307 22 21V17C22 16.7348 21.8946 16.4804 21.7071 16.2929C21.5196 16.1054 21.2652 16 21 16ZM21.92 2.62C21.8185 2.37565 21.6243 2.18147 21.38 2.08C21.2598 2.02876 21.1307 2.00158 21 2H17C16.7348 2 16.4804 2.10536 16.2929 2.29289C16.1054 2.48043 16 2.73478 16 3C16 3.26522 16.1054 3.51957 16.2929 3.70711C16.4804 3.89464 16.7348 4 17 4H18.59L13.29 9.29C13.1963 9.38296 13.1219 9.49356 13.0711 9.61542C13.0203 9.73728 12.9942 9.86799 12.9942 10C12.9942 10.132 13.0203 10.2627 13.0711 10.3846C13.1219 10.5064 13.1963 10.617 13.29 10.71C13.383 10.8037 13.4936 10.8781 13.6154 10.9289C13.7373 10.9797 13.868 11.0058 14 11.0058C14.132 11.0058 14.2627 10.9797 14.3846 10.9289C14.5064 10.8781 14.617 10.8037 14.71 10.71L20 5.41V7C20 7.26522 20.1054 7.51957 20.2929 7.70711C20.4804 7.89464 20.7348 8 21 8C21.2652 8 21.5196 7.89464 21.7071 7.70711C21.8946 7.51957 22 7.26522 22 7V3C21.9984 2.86932 21.9712 2.74022 21.92 2.62V2.62Z" fill="currentColor"/>' +
     "</svg>";
-  var ICON_MINIMIZE =
-    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">' +
-    '<path d="M4.5 7.5h3a1 1 0 0 0 1-1v-3M15.5 7.5h-3a1 1 0 0 1-1-1v-3M4.5 12.5h3a1 1 0 0 1 1 1v3M15.5 12.5h-3a1 1 0 0 0-1 1v3" stroke-linecap="round" stroke-linejoin="round"/>' +
-    "</svg>";
+  // Same icon for Expand and Minimise, so only the label changes.
+  var ICON_MINIMIZE = ICON_EXPAND;
   var ICON_PLUS_CIRCLE =
     '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">' +
     '<circle cx="10" cy="10" r="7.25"/>' +
     '<path d="M10 7v6M7 10h6" stroke-linecap="round"/>' +
     "</svg>";
   var ICON_TRASH =
-    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16">' +
-    '<path d="M4.5 5.5h11M8 5.5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M6 5.5l.6 10.4a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L14 5.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+    '<path d="M2.5 5H17.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M6.66675 5V3.33333C6.66675 2.89131 6.84234 2.46738 7.15491 2.15482C7.46746 1.84226 7.89139 1.66666 8.33342 1.66666H11.6667C12.1087 1.66666 12.5327 1.84226 12.8452 2.15482C13.1578 2.46738 13.3334 2.89131 13.3334 3.33333V5H6.66675ZM15.8334 5V16.6667C15.8334 17.1087 15.6578 17.5326 15.3452 17.8452C15.0327 18.1577 14.6087 18.3333 14.1667 18.3333H5.83341C5.39139 18.3333 4.96746 18.1577 4.65491 17.8452C4.34234 17.5326 4.16675 17.1087 4.16675 16.6667V5H15.8334Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M8.33325 9.16666V14.1667" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<path d="M11.6667 9.16666V14.1667" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    "</svg>";
+  var ICON_SYNC =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M21 12a9 9 0 0 0-15-6.7L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"/><path d="M16 16h5v5"/>' +
     "</svg>";
   var ICON_CHECK =
     '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">' +
@@ -314,7 +361,7 @@
   var hasActiveCoupons = false;
   var selectedPaymentMethod = "pay_now";
   var eligiblePaymentTerms = [];
-  var netTermsDueInDays = 30;
+  var netTermsDueInDays = null;
   var customerCreditLimit = null;
   var customerCreditBalance = 0;
   var customerOnAccountEnabled = false;
@@ -323,7 +370,8 @@
   // a secure payment link.
   var paymentLinkSent = null;
   var activeTab = "cart";
-  var accountView = "dashboard"; // "dashboard" | "orders" | "order" | "addAddress"
+  var accountView = "dashboard"; // "dashboard" | "orders" | "order" | "addAddress" | "reports"
+  var reportPeriod = "quarter"; // "quarter" | "month" | "week"
   var accountOrders = null;
   var accountOrdersError = "";
   var accountOrderCounts = null;
@@ -379,7 +427,7 @@
       ICON_USER + "<span>" + escapeHtml(i18n.myAccount) + "</span>" +
       "</span>" +
       renderUserMenuHtml() +
-      '<button type="button" class="sl-cart-tabs-close" data-sl-close aria-label="' + escapeHtml(i18n.close) + '">&times;</button>'
+      '<button type="button" class="sl-cart-tabs-close" data-sl-close onclick="console.log(\'🔴 [Close Button inline onclick]\'); if(window.__slCloseDrawer){window.__slCloseDrawer(event);}else if(this.closest(\'cart-drawer\')){this.closest(\'cart-drawer\').close();}" aria-label="' + escapeHtml(i18n.close) + '">&times;</button>'
     );
   }
 
@@ -764,8 +812,109 @@
     );
   }
 
+  function renderReportDataHtml(orders, period) {
+    if (!orders || !orders.length) return "";
+    var groups = {};
+    var orderKeys = [];
+    orders.forEach(function (order) {
+      var d = order.date ? new Date(order.date) : null;
+      if (!d || isNaN(d.getTime())) return;
+      var key = "";
+      if (period === "quarter") {
+        var q = Math.floor(d.getMonth() / 3) + 1;
+        key = "Q" + q + " " + d.getFullYear();
+      } else if (period === "week") {
+        var startOfYear = new Date(d.getFullYear(), 0, 1);
+        var pastDaysOfYear = (d - startOfYear) / 86400000;
+        var weekNum = Math.ceil((pastDaysOfYear + startOfYear.getDay() + 1) / 7);
+        key = "Week " + weekNum + ", " + d.getFullYear();
+      } else {
+        var months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        key = months[d.getMonth()] + " " + d.getFullYear();
+      }
+      if (!groups[key]) {
+        groups[key] = { period: key, count: 0, total: 0 };
+        orderKeys.push(key);
+      }
+      groups[key].count += 1;
+      groups[key].total += (Number(order.total) || 0);
+    });
+
+    var rows = orderKeys.map(function (k) { return groups[k]; });
+    if (!rows.length) return "";
+
+    return (
+      '<div class="sl-report-data-wrap">' +
+      '<table class="sl-cart-activity-table">' +
+      '<thead><tr><th>Period</th><th>Orders</th><th style="text-align:right;">Total Spend</th></tr></thead>' +
+      '<tbody>' +
+      rows.map(function (r) {
+        return (
+          '<tr class="sl-cart-activity-row">' +
+          '<td class="sl-cart-activity-ref"><strong>' + escapeHtml(r.period) + '</strong></td>' +
+          '<td>' + r.count + ' ' + (r.count === 1 ? 'order' : 'orders') + '</td>' +
+          '<td style="text-align:right;">' + formatMoneyFromDecimal(r.total) + '</td>' +
+          '</tr>'
+        );
+      }).join("") +
+      '</tbody>' +
+      '</table>' +
+      '</div>'
+    );
+  }
+
+  function renderAccountReportsBody() {
+    var hasOrders = accountOrders && accountOrders.length > 0;
+    var dataHtml = hasOrders ? renderReportDataHtml(accountOrders, reportPeriod) : "";
+    var contentHtml = dataHtml || (
+      '<div class="sl-report-empty-box">' +
+      '<div class="sl-report-empty-icon">' +
+      '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="4" y="3" width="16" height="11" rx="1"/>' +
+      '<line x1="8" y1="11" x2="8" y2="8.5"/>' +
+      '<line x1="12" y1="11" x2="12" y2="6"/>' +
+      '<line x1="16" y1="11" x2="16" y2="7.5"/>' +
+      '<line x1="2" y1="14" x2="22" y2="14"/>' +
+      '<line x1="7" y1="14" x2="5" y2="21"/>' +
+      '<line x1="17" y1="14" x2="19" y2="21"/>' +
+      '<line x1="12" y1="14" x2="12" y2="21"/>' +
+      '<line x1="6" y1="19" x2="18" y2="19"/>' +
+      '</svg>' +
+      '</div>' +
+      '<p class="sl-report-empty-text">There is currently no data to display. Reports will show once you place your first order.</p>' +
+      '</div>'
+    );
+
+    return (
+      '<div class="sl-cart-account">' +
+      '<div class="sl-cart-heading-row sl-cart-account-header">' +
+      '<div class="sl-cart-account-breadcrumb">' +
+      '<a href="#" data-sl-account-home>' + escapeHtml(i18n.myAccountTitle || "My Account") + '</a>' +
+      ' <span>&rsaquo;</span> ' + escapeHtml(i18n.reports || "Reports") +
+      '</div>' +
+      '<button type="button" class="sl-cart-expand" data-sl-expand>' +
+      (isExpanded ? ICON_MINIMIZE : ICON_EXPAND) +
+      '<span>' + escapeHtml(isExpanded ? i18n.minimise : i18n.expand) + '</span>' +
+      '</button>' +
+      '</div>' +
+      '<div class="sl-report-controls-row">' +
+      '<h4 class="sl-report-title">' + escapeHtml(i18n.purchaseHistoryReport || "Purchase history by time period") + '</h4>' +
+      '<div class="sl-report-select-wrap">' +
+      '<select class="sl-report-period-select" data-sl-report-period>' +
+      '<option value="quarter"' + (reportPeriod === "quarter" ? " selected" : "") + '>By quarter</option>' +
+      '<option value="month"' + (reportPeriod === "month" ? " selected" : "") + '>By month</option>' +
+      '<option value="week"' + (reportPeriod === "week" ? " selected" : "") + '>By week</option>' +
+      '</select>' +
+      '<span class="sl-report-select-arrow">&#9662;</span>' +
+      '</div>' +
+      '</div>' +
+      contentHtml +
+      '</div>'
+    );
+  }
+
   function payNet30Label() {
-    return (i18n.payNet30 || "Terms Net {{days}} ( CC, ACH )").replace("{{days}}", netTermsDueInDays);
+    return (i18n.payNet30 || "Terms Net {{days}} ( CC, ACH )").replace("{{days}}", netTermsDueInDays || 30);
   }
 
   function netPaymentTermsLabel() {
@@ -831,8 +980,7 @@
       "</div>" +
       recentActivityBody +
 
-      '<h3 class="sl-cart-heading sl-cart-heading-spaced">' + escapeHtml(i18n.shoppingLists) + "</h3>" +
-      '<div class="sl-cart-account-empty-box">' + escapeHtml(i18n.shoppingListsEmpty) + "</div>" +
+      renderShoppingListsSection() +
 
       '<h3 class="sl-cart-heading sl-cart-heading-spaced">' + escapeHtml(i18n.myDetails) + "</h3>" +
       '<div class="sl-cart-account-summary-box">' +
@@ -860,7 +1008,13 @@
       "</div>" +
 
       '<h3 class="sl-cart-heading sl-cart-heading-spaced">' + escapeHtml(i18n.reports) + "</h3>" +
-      '<div class="sl-cart-account-report-row">' + escapeHtml(i18n.purchaseHistoryReport) + "</div>" +
+      '<div class="sl-cart-reports-table">' +
+      '<div class="sl-cart-reports-header">' + escapeHtml(i18n.reportsNameColumn || "Name") + "</div>" +
+      '<a href="#" class="sl-cart-reports-row" data-sl-open-reports>' +
+      '<span>' + escapeHtml(i18n.purchaseHistoryReport) + '</span>' +
+      '<span class="sl-cart-reports-arrow">&rsaquo;</span>' +
+      '</a>' +
+      '</div>' +
 
       '<div class="sl-cart-heading-row sl-cart-heading-spaced">' +
       '<h3 class="sl-cart-heading">' + escapeHtml(i18n.addressBook) + "</h3>" +
@@ -982,7 +1136,7 @@
       // Also hidden entirely when no active coupon discount exists at all
       // (docs.sparklayer.io/discounts "the coupon code box will only show
       // ... if there is an 'active' discount code that is 'enabled'").
-      var couponInputHtml = hasActiveCoupons && appliedCouponCodes.length < MAX_COUPON_CODES
+      var couponInputHtml = (hasActiveCoupons && appliedCouponCodes.length < MAX_COUPON_CODES)
         ? '<div class="sl-cart-coupon">' +
         '<input type="text" class="sl-cart-coupon-input" data-sl-coupon-input placeholder="Coupon code"' + (couponValidating ? " disabled" : "") + '>' +
         '<button type="button" class="sl-cart-coupon-apply" data-sl-coupon-apply' + (couponValidating ? " disabled" : "") + '>' + (couponValidating ? "Applying…" : "Apply") + "</button>" +
@@ -997,13 +1151,31 @@
           '<button type="button" class="sl-cart-coupon-remove" data-sl-coupon-remove data-code="' + escapeHtml(code) + '">Remove</button></p>'
         );
       }).join("");
+
+      var subtotal = (cartData.items || []).reduce(function (sum, line) {
+        return sum + lineDisplayPrice(line).unit * line.quantity;
+      }, 0);
+      var lineWord = (cartData.items || []).length === 1 ? i18n.line : i18n.lines;
+      var itemWord = (cartData.item_count || 0) === 1 ? i18n.item : i18n.items;
+      var countStr = "(" + (cartData.items || []).length + " " + lineWord + ", " + (cartData.item_count || 0) + " " + itemWord + ")";
+
+      var hasTerms = Boolean(eligiblePaymentTerms && eligiblePaymentTerms.length > 0);
+      var isNet = hasTerms && (eligiblePaymentTerms.indexOf("NET_30") !== -1 || eligiblePaymentTerms.indexOf("NET_60") !== -1 || eligiblePaymentTerms.indexOf("NET_90") !== -1 || eligiblePaymentTerms.indexOf("net30") !== -1 || (netTermsDueInDays && netTermsDueInDays > 0));
+      var termsName = isNet ? ("Net " + (netTermsDueInDays || 30)) : (hasTerms ? "Pay on Account" : "");
+      var termsNoticeHtml = termsName
+        ? '<div class="sl-b2b-terms-notice">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+          '<span>B2B Payment Terms: <strong>' + escapeHtml(termsName) + ' (Pay on Account)</strong></span>' +
+          '</div>'
+        : "";
+
       return (
         couponInputHtml +
         couponErrorHtml +
         couponAppliedHtml +
         '<div class="sl-cart-subtotal">' +
-        "<span>" + escapeHtml(i18n.subtotal) + ' <span class="sl-cart-subtotal-count"></span></span>' +
-        '<span class="sl-cart-subtotal-amount"></span>' +
+        "<span>" + escapeHtml(i18n.subtotal) + ' <span class="sl-cart-subtotal-count">' + escapeHtml(countStr) + "</span></span>" +
+        '<span class="sl-cart-subtotal-amount">' + escapeHtml(formatMoney(subtotal)) + "</span>" +
         "</div>" +
         '<p class="sl-cart-tax-note">' + escapeHtml(i18n.taxNote) + "</p>" +
         '<div class="sl-cart-footer-divider"></div>' +
@@ -1074,6 +1246,8 @@
   }
 
   function setStep(step) {
+    overrideForm = null;
+    exForm = null;
     activeTab = "cart";
     tabsEl.innerHTML = renderTabsHtml();
     currentStep = step;
@@ -1081,6 +1255,9 @@
     addAddressError = "";
     checkoutError = "";
     resetAccountAddAddressState();
+    // The progress bar only appears once checkout starts (Shipping onwards),
+    // not on the cart step — same in the theme's drawer and SparkLayer's own.
+    stepsEl.hidden = currentStep === 0;
     stepsEl.innerHTML = renderStepsHtml();
     if (currentStep === 0) {
       bodyEl.innerHTML = renderCartBody();
@@ -1093,6 +1270,7 @@
     }
     footerEl.innerHTML = renderFooterHtml();
     if (currentStep === 0) renderCartLines();
+    if (typeof syncDawnNativeDrawer === "function" && isNativeDawnActive()) syncDawnNativeDrawer();
   }
 
   function renderShippingStep() {
@@ -1131,6 +1309,7 @@
         if (activeTab !== "account") return;
         if (accountView === "dashboard") bodyEl.innerHTML = renderAccountDashboardBody();
         if (accountView === "orders") bodyEl.innerHTML = renderAccountOrdersListBody();
+        if (accountView === "reports") bodyEl.innerHTML = renderAccountReportsBody();
       });
   }
 
@@ -1168,8 +1347,11 @@
       window.location.href = "/account";
       return;
     }
+    overrideForm = null;
+    exForm = null;
     activeTab = "account";
     accountView = "dashboard";
+    listAddedBanner = false;
     recentActivityFilter = "all";
     resetAccountAddAddressState();
     tabsEl.innerHTML = renderTabsHtml();
@@ -1177,6 +1359,7 @@
     footerEl.innerHTML = "";
     bodyEl.innerHTML = renderAccountDashboardBody();
     fetchAccountOrders();
+    if (typeof syncDawnNativeDrawer === "function" && isNativeDawnActive()) syncDawnNativeDrawer();
   }
 
   function showOrdersList() {
@@ -1189,11 +1372,28 @@
     if (!accountOrderYears) fetchAccountOrders({ forList: true });
   }
 
+  function showReportsView() {
+    activeTab = "account";
+    accountView = "reports";
+    tabsEl.innerHTML = renderTabsHtml();
+    stepsEl.innerHTML = "";
+    footerEl.innerHTML = "";
+    bodyEl.innerHTML = renderAccountReportsBody();
+    if (!accountOrders) fetchAccountOrders();
+  }
+
   function showReorder() {
     if (activeTab === "account" && accountView === "order") bodyEl.innerHTML = renderAccountOrderDetail();
   }
 
   root.addEventListener("change", function (event) {
+    if (event.target && event.target.matches && event.target.matches("[data-sl-report-period]")) {
+      reportPeriod = event.target.value;
+      if (activeTab === "account" && accountView === "reports") {
+        bodyEl.innerHTML = renderAccountReportsBody();
+      }
+      return;
+    }
     var accept = event.target.closest && event.target.closest("[data-sl-reorder-accept]");
     if (!accept || !reorder || !reorder.rows) return;
     var id = accept.getAttribute("data-sl-reorder-accept");
@@ -1332,8 +1532,10 @@
     });
   }
 
+  var isFetchingPaymentTerms = false;
   function fetchPaymentTerms() {
-    if (!paymentTermsProxyUrl) return;
+    if (!paymentTermsProxyUrl || isFetchingPaymentTerms) return;
+    isFetchingPaymentTerms = true;
     var url = paymentTermsProxyUrl;
     if (customerId) {
       url += (url.indexOf("?") === -1 ? "?" : "&") + "logged_in_customer_id=" + encodeURIComponent(customerId);
@@ -1341,13 +1543,20 @@
     console.log("[SparkLayer] Fetching payment terms from url:", url, "for customerId:", customerId);
     safeFetchJson(url)
       .then(function (result) {
+        isFetchingPaymentTerms = false;
         var body = result.body || {};
         console.log("[SparkLayer] Received payment terms response:", body);
         eligiblePaymentTerms = body.eligibleTerms || [];
-        if (body.netTermsDueInDays) netTermsDueInDays = body.netTermsDueInDays;
+        netTermsDueInDays = typeof body.netTermsDueInDays === "number" ? body.netTermsDueInDays : null;
+        if (currentStep === 0 && activeTab === "cart") footerEl.innerHTML = renderFooterHtml();
         if (currentStep === 2) renderReviewPayStep();
+        if (typeof hookDawnFooter === "function" && isNativeDawnActive()) {
+          var dawn = document.querySelector("cart-drawer");
+          if (dawn) hookDawnFooter(dawn);
+        }
       })
       .catch(function (err) {
+        isFetchingPaymentTerms = false;
         console.error("[SparkLayer] Error fetching payment terms:", err);
         eligiblePaymentTerms = [];
       });
@@ -1377,11 +1586,14 @@
     });
   }
 
+  var isFetchingCreditInfo = false;
   function fetchCreditInfo() {
-    if (!creditInfoProxyUrl || !customerId) return;
+    if (!creditInfoProxyUrl || !customerId || isFetchingCreditInfo) return;
+    isFetchingCreditInfo = true;
     var url = creditInfoProxyUrl + "?logged_in_customer_id=" + encodeURIComponent(customerId);
     safeFetchJson(url)
       .then(function (result) {
+        isFetchingCreditInfo = false;
         var body = result.body || {};
         customerCreditLimit = typeof body.creditLimit === "number" ? body.creditLimit : null;
         customerCreditBalance = typeof body.balance === "number" ? body.balance : 0;
@@ -1390,25 +1602,35 @@
           bodyEl.innerHTML = renderAccountDashboardBody();
         }
         if (currentStep === 2) renderReviewPayStep();
+        if (typeof hookDawnFooter === "function" && isNativeDawnActive()) {
+          var dawn = document.querySelector("cart-drawer");
+          if (dawn) hookDawnFooter(dawn);
+        }
       })
       .catch(function () {
+        isFetchingCreditInfo = false;
         customerCreditLimit = null;
         customerCreditBalance = 0;
         customerOnAccountEnabled = false;
       });
   }
 
+  var isFetchingCoupons = false;
   function fetchCouponAvailability() {
-    if (!couponAvailabilityProxyUrl) return;
+    if (!couponAvailabilityProxyUrl || isFetchingCoupons) return;
+    isFetchingCoupons = true;
     safeFetchJson(couponAvailabilityProxyUrl)
       .then(function (result) {
-        hasActiveCoupons = !!(result.body && result.body.hasCoupons);
+        isFetchingCoupons = false;
+        hasActiveCoupons = !!(result.body && (result.body.hasCoupons || result.body.hasActiveDiscounts));
         // Only while the cart tab is showing — the reply can arrive after the
         // shopper has already switched to My Account.
         if (currentStep === 0 && activeTab === "cart") footerEl.innerHTML = renderFooterHtml();
       })
       .catch(function () {
+        isFetchingCoupons = false;
         hasActiveCoupons = false;
+        if (currentStep === 0 && activeTab === "cart") footerEl.innerHTML = renderFooterHtml();
       });
   }
 
@@ -1968,6 +2190,9 @@
   });
 
   var agentSummary = null;
+  // The customer named by the active agent session; the "Ordering for" bar has
+  // it before the fuller summary arrives (or if the summary call fails).
+  var agentSessionCustomer = null;
 
   function loadAgentSummary() {
     if (!agentSummaryProxyUrl || !window.sparklayerAgentContextId) {
@@ -2261,7 +2486,7 @@
 
     // --- Order for Customer View ---
     if (window.sparklayerAgentContextId) {
-      var cust = (agentSummary && agentSummary.customer) || {};
+      var cust = (agentSummary && agentSummary.customer) || agentSessionCustomer || {};
       var custTitle = cust.company || cust.name || "Customer Session Active";
       var custSubtitle = [cust.name, cust.email, cust.group].filter(Boolean).join(" · ");
 
@@ -2272,8 +2497,13 @@
         '<button type="button" class="sl-agent-exit-btn" data-sl-agent-exit>Exit Session</button>' +
         '</div>' +
         '<div class="sl-agent-active-details">' +
+        '<span class="sl-agent-active-avatar" aria-hidden="true">' +
+        escapeHtml(custTitle.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0); }).join("").toUpperCase()) +
+        '</span>' +
+        '<div class="sl-agent-active-text">' +
         '<h4 class="sl-agent-active-name">' + escapeHtml(custTitle) + '</h4>' +
         (custSubtitle ? '<p class="sl-agent-active-meta">' + escapeHtml(custSubtitle) + '</p>' : '') +
+        '</div>' +
         '</div>' +
         '<div class="sl-agent-active-actions">' +
         '<button type="button" class="sl-agent-btn-primary" data-sl-tab="cart">' +
@@ -3157,37 +3387,92 @@
     );
   }
 
-  function overrideFormHtml(line) {
+  function renderOverrideScreenHtml() {
     var f = overrideForm;
-    var current = lineDisplayPrice(line).unit;
+    if (!f || !f.line) return "";
+    var line = f.line;
+    var currentPriceFormatted = formatMoney(f.currentPrice);
+    var meta = [line.variant_title, line.sku ? "SKU: " + line.sku : null]
+      .filter(Boolean)
+      .join(" \u00b7 ");
 
     return (
-      '<div class="sl-agent-ov-form">' +
-      '<label>New price per unit' +
-      '<input type="text" inputmode="decimal" data-sl-ov-price value="' + escapeHtml(f.price) + '" placeholder="' + escapeHtml((current / 100).toFixed(2)) + '">' +
-      "</label>" +
-      "<label>Reason" +
-      '<select data-sl-ov-reason>' +
+      '<div class="sl-ov-view">' +
+      '<div class="sl-ov-nav">' +
+      '<button type="button" class="sl-ov-back-btn" data-sl-ov-cancel>' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>' +
+      'Back to Cart' +
+      '</button>' +
+      '<span class="sl-ov-title">Change Price</span>' +
+      '</div>' +
+
+      '<div class="sl-ov-body">' +
+      '<div class="sl-ov-item-card">' +
+      (line.image ? '<img src="' + escapeHtml(line.image) + '" alt="' + escapeHtml(line.product_title) + '" class="sl-ov-item-img">' : '') +
+      '<div class="sl-ov-item-details">' +
+      '<div class="sl-ov-item-name">' + escapeHtml(line.product_title) + '</div>' +
+      (meta ? '<div class="sl-ov-item-meta">' + escapeHtml(meta) + '</div>' : '') +
+      '<div class="sl-ov-item-price-row">' +
+      'Current unit price: <strong>' + escapeHtml(currentPriceFormatted) + '</strong>' +
+      '</div>' +
+      '</div>' +
+      '</div>' +
+
+      '<div class="sl-ov-form-box">' +
+      '<div class="sl-ov-field">' +
+      '<label for="sl-ov-input-price">New price per unit (' + escapeHtml(cartData.currency || "USD") + ')</label>' +
+      '<div class="sl-ov-input-wrapper">' +
+      '<span class="sl-ov-currency-prefix">$</span>' +
+      '<input id="sl-ov-input-price" type="text" inputmode="decimal" class="sl-ov-input sl-ov-input-with-prefix" data-sl-ov-price value="' + escapeHtml(f.price || "") + '" placeholder="' + escapeHtml((f.currentPrice / 100).toFixed(2)) + '">' +
+      '</div>' +
+      '</div>' +
+
+      '<div class="sl-ov-field">' +
+      '<label for="sl-ov-select-reason">Reason for price change</label>' +
+      '<select id="sl-ov-select-reason" class="sl-ov-select" data-sl-ov-reason>' +
       OVERRIDE_REASONS.map(function (r) {
-        return '<option value="' + r[0] + '"' + (f.reasonCode === r[0] ? " selected" : "") + ">" + r[1] + "</option>";
+        return '<option value="' + r[0] + '"' + (f.reasonCode === r[0] ? " selected" : "") + '>' + escapeHtml(r[1]) + '</option>';
       }).join("") +
-      "</select>" +
-      "</label>" +
-      "<label>Note" +
-      '<input type="text" data-sl-ov-text value="' + escapeHtml(f.reasonText) + '" placeholder="Why is this price right?">' +
-      "</label>" +
-      (f.stepUp
-        ? "<label>Authenticator code" +
-        '<input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" data-sl-ov-code aria-label="6-digit authenticator code" value="' + escapeHtml(f.code || "") + '" placeholder="123456">' +
-        "</label>"
-        : "") +
-      (f.error ? '<p class="sl-agent-error" role="alert">' + escapeHtml(f.error) + "</p>" : "") +
-      '<div class="sl-agent-ov-buttons">' +
-      '<button type="button" class="sl-agent-start" data-sl-ov-submit' + (f.busy ? " disabled" : "") + ">Request price change</button>" +
-      '<button type="button" class="sl-agent-link" data-sl-ov-cancel>Cancel</button>' +
-      "</div>" +
-      "</div>"
+      '</select>' +
+      '</div>' +
+
+      '<div class="sl-ov-field">' +
+      '<label for="sl-ov-textarea-note">Note / Justification</label>' +
+      '<textarea id="sl-ov-textarea-note" class="sl-ov-textarea" rows="3" data-sl-ov-text placeholder="Why is this price right?">' + escapeHtml(f.reasonText || "") + '</textarea>' +
+      '</div>' +
+
+      (f.stepUp ? (
+        '<div class="sl-ov-field">' +
+        '<label for="sl-ov-input-code">Authenticator code (6 digits)</label>' +
+        '<input id="sl-ov-input-code" type="text" inputmode="numeric" maxlength="6" class="sl-ov-input" data-sl-ov-code value="' + escapeHtml(f.code || "") + '" placeholder="123456">' +
+        '</div>'
+      ) : '') +
+
+      (f.error ? '<div class="sl-ov-error-banner" role="alert">' + escapeHtml(f.error) + '</div>' : '') +
+      '</div>' +
+      '</div>' +
+
+      '<div class="sl-ov-footer">' +
+      '<button type="button" class="sl-ov-btn-cancel" data-sl-ov-cancel>Cancel</button>' +
+      '<button type="button" class="sl-ov-btn-submit" data-sl-ov-submit' + (f.busy ? ' disabled' : '') + '>' +
+      (f.busy ? 'Submitting...' : 'Request price change') +
+      '</button>' +
+      '</div>' +
+      '</div>'
     );
+  }
+
+  function renderOverrideScreen() {
+    if (!overrideForm) return;
+    tabsEl.innerHTML = renderTabsHtml();
+    stepsEl.innerHTML = "";
+    footerEl.innerHTML = "";
+    bodyEl.innerHTML = renderOverrideScreenHtml();
+    bodyEl.scrollTop = 0;
+  }
+
+  function overrideFormHtml(line) {
+    return "";
   }
 
   // Shown under a cart line, only while an agent is ordering for a customer.
@@ -3215,8 +3500,7 @@
     }
 
     if (overridesEnabled) {
-      if (overrideForm && overrideForm.variantId === variantId) html += overrideFormHtml(line);
-      else html += '<button type="button" class="sl-agent-btn-price" data-sl-ov-open><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Change price</button>';
+      html += '<button type="button" class="sl-agent-btn-price" data-sl-ov-open><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Change price</button>';
     }
 
     return html + "</div>";
@@ -3234,25 +3518,25 @@
 
     if (!String(f.price).trim()) {
       f.error = "Enter the price you want, for example 42.50.";
-      renderCartLines();
+      renderOverrideScreen();
       return;
     }
     if (!String(f.reasonText).trim()) {
       f.error = "Say why this price is right.";
-      renderCartLines();
+      renderOverrideScreen();
       return;
     }
 
     var code = String(f.code || "").split(" ").join("");
     if (f.stepUp && code.length !== 6) {
       f.error = "Enter the 6-digit code from your authenticator app.";
-      renderCartLines();
+      renderOverrideScreen();
       return;
     }
 
     f.busy = true;
     f.error = "";
-    renderCartLines();
+    renderOverrideScreen();
 
     // Changing a price is a high-risk action: for roles that use MFA the
     // server asks for a fresh authenticator code first (a "step-up" check).
@@ -3268,7 +3552,7 @@
           f.error = check.body && check.body.code === "LOCKED"
             ? "Too many wrong codes. Try again in a few minutes."
             : "That code isn't right. Check your authenticator app and try again.";
-          renderCartLines();
+          renderOverrideScreen();
           return null;
         }
 
@@ -3297,17 +3581,19 @@
           f.busy = false;
           f.code = "";
           f.error = "Enter your authenticator code to confirm this price change.";
-          return loadAgentOverrides().then(function () { renderCartLines(); });
+          renderOverrideScreen();
+          return null;
         }
 
         if (result.ok) {
           overrideForm = null;
+          setStep(0);
           return loadAgentOverrides();
         }
 
         f.busy = false;
         f.error = (result.body && result.body.message) || "Could not send the request.";
-        renderCartLines();
+        renderOverrideScreen();
         return null;
       });
   }
@@ -3317,14 +3603,24 @@
     if (open) {
       var line = lineForElement(open);
       if (!line) return;
-      overrideForm = { variantId: String(line.variant_id), price: "", reasonCode: "VOLUME_COMMITMENT", reasonText: "", error: "", busy: false };
-      renderCartLines();
+      var curPrice = lineDisplayPrice(line).unit;
+      overrideForm = {
+        line: line,
+        variantId: String(line.variant_id),
+        currentPrice: curPrice,
+        price: "",
+        reasonCode: "VOLUME_COMMITMENT",
+        reasonText: "",
+        error: "",
+        busy: false
+      };
+      renderOverrideScreen();
       return;
     }
 
     if (event.target.closest("[data-sl-ov-cancel]")) {
       overrideForm = null;
-      renderCartLines();
+      setStep(0);
       return;
     }
 
@@ -3536,10 +3832,137 @@
     ["request_custom", "Custom line"],
   ];
 
-  function exField(name, label, value, placeholder) {
-    return "<label>" + escapeHtml(label) +
-      '<input type="text" data-sl-ex-field="' + name + '" value="' + escapeHtml(value || "") + '" placeholder="' + escapeHtml(placeholder || "") + '">' +
-      "</label>";
+  function renderExceptionScreenHtml() {
+    var f = exForm;
+    if (!f) return "";
+
+    var subtotal = (cartData.items || []).reduce(function (sum, line) {
+      return sum + lineDisplayPrice(line).unit * line.quantity;
+    }, 0);
+
+    var fields = "";
+    if (f.type === "request_discount") {
+      fields =
+        '<div class="sl-ov-field">' +
+        '<label for="sl-ex-percent">Discount percent (%)</label>' +
+        '<input id="sl-ex-percent" type="text" inputmode="decimal" class="sl-ov-input" data-sl-ex-field="percent" value="' + escapeHtml(f.values.percent || "") + '" placeholder="e.g. 5">' +
+        '</div>' +
+        '<div class="sl-ov-field">' +
+        '<label for="sl-ex-amount">Or amount off (' + escapeHtml(cartData.currency || "USD") + ')</label>' +
+        '<div class="sl-ov-input-wrapper">' +
+        '<span class="sl-ov-currency-prefix">$</span>' +
+        '<input id="sl-ex-amount" type="text" inputmode="decimal" class="sl-ov-input sl-ov-input-with-prefix" data-sl-ex-field="amount" value="' + escapeHtml(f.values.amount || "") + '" placeholder="e.g. 40.00">' +
+        '</div>' +
+        '</div>';
+    } else if (f.type === "request_shipping") {
+      fields =
+        '<div class="sl-ov-field">' +
+        '<label for="sl-ex-price">Shipping price (' + escapeHtml(cartData.currency || "USD") + ', 0 for free)</label>' +
+        '<div class="sl-ov-input-wrapper">' +
+        '<span class="sl-ov-currency-prefix">$</span>' +
+        '<input id="sl-ex-price" type="text" inputmode="decimal" class="sl-ov-input sl-ov-input-with-prefix" data-sl-ex-field="price" value="' + escapeHtml(f.values.price || "") + '" placeholder="e.g. 0.00">' +
+        '</div>' +
+        '</div>';
+    } else if (f.type === "request_moq") {
+      fields = '<p class="sl-agent-hint" style="margin:4px 0 8px;font-size:12px;color:#6b7280;">This order will be allowed below the customer\'s minimum order quantity.</p>';
+    } else if (f.type === "request_increment") {
+      fields = '<p class="sl-agent-hint" style="margin:4px 0 8px;font-size:12px;color:#6b7280;">This order will be allowed even though its quantity isn\'t a whole number of packs.</p>';
+    } else if (f.type === "request_credit") {
+      fields = '<p class="sl-agent-hint" style="margin:4px 0 8px;font-size:12px;color:#6b7280;">This order will be allowed to go past the customer\'s available credit, up to its total. An approver may need to agree.</p>';
+    } else if (f.type === "request_address") {
+      fields =
+        '<p class="sl-agent-hint" style="margin:4px 0 8px;font-size:12px;color:#6b7280;">Used for this order only. It is not saved to the customer\'s address book.</p>' +
+        '<div class="sl-ov-field"><label>Company / Name</label><input type="text" class="sl-ov-input" data-sl-ex-field="company" value="' + escapeHtml(f.values.company || "") + '"></div>' +
+        '<div class="sl-ov-field"><label>Address</label><input type="text" class="sl-ov-input" data-sl-ex-field="address1" value="' + escapeHtml(f.values.address1 || "") + '"></div>' +
+        '<div class="sl-ov-field"><label>Apartment, suite</label><input type="text" class="sl-ov-input" data-sl-ex-field="address2" value="' + escapeHtml(f.values.address2 || "") + '"></div>' +
+        '<div class="sl-ov-field"><label>City</label><input type="text" class="sl-ov-input" data-sl-ex-field="city" value="' + escapeHtml(f.values.city || "") + '"></div>' +
+        '<div class="sl-ov-field"><label>State / Province code</label><input type="text" class="sl-ov-input" data-sl-ex-field="provinceCode" value="' + escapeHtml(f.values.provinceCode || "") + '" placeholder="e.g. TX"></div>' +
+        '<div class="sl-ov-field"><label>Postal code</label><input type="text" class="sl-ov-input" data-sl-ex-field="zip" value="' + escapeHtml(f.values.zip || "") + '"></div>' +
+        '<div class="sl-ov-field"><label>Country code</label><input type="text" class="sl-ov-input" data-sl-ex-field="countryCode" value="' + escapeHtml(f.values.countryCode || "") + '" placeholder="e.g. US"></div>' +
+        '<div class="sl-ov-field"><label>Phone</label><input type="text" class="sl-ov-input" data-sl-ex-field="phone" value="' + escapeHtml(f.values.phone || "") + '"></div>';
+    } else {
+      var taxable = f.values.taxable !== "false";
+      fields =
+        '<div class="sl-ov-field"><label>What is it?</label><input type="text" class="sl-ov-input" data-sl-ex-field="title" value="' + escapeHtml(f.values.title || "") + '" placeholder="e.g. Setup fee"></div>' +
+        '<div class="sl-ov-field"><label>Quantity</label><input type="text" class="sl-ov-input" data-sl-ex-field="quantity" value="' + escapeHtml(f.values.quantity === undefined ? "1" : f.values.quantity) + '" placeholder="1"></div>' +
+        '<div class="sl-ov-field"><label>Price per unit</label><div class="sl-ov-input-wrapper"><span class="sl-ov-currency-prefix">$</span><input type="text" inputmode="decimal" class="sl-ov-input sl-ov-input-with-prefix" data-sl-ex-field="price" value="' + escapeHtml(f.values.price || "") + '" placeholder="e.g. 50.00"></div></div>' +
+        '<label class="sl-nc-check" style="margin-top:4px;display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;"><input type="checkbox" data-sl-ex-taxable' + (taxable ? " checked" : "") + '> Tax applies to this item</label>' +
+        (taxable ? '<div class="sl-ov-field"><label>Tax code</label><input type="text" class="sl-ov-input" data-sl-ex-field="taxCode" value="' + escapeHtml(f.values.taxCode || "") + '" placeholder="e.g. SERVICES-STD"></div>' : "") +
+        '<div class="sl-ov-field"><label>Accounting code (optional)</label><input type="text" class="sl-ov-input" data-sl-ex-field="accountingCode" value="' + escapeHtml(f.values.accountingCode || "") + '"></div>';
+    }
+
+    return (
+      '<div class="sl-ov-view">' +
+      '<div class="sl-ov-nav">' +
+      '<button type="button" class="sl-ov-back-btn" data-sl-ex-cancel>' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>' +
+      'Back to Cart' +
+      '</button>' +
+      '<span class="sl-ov-title">Order Exception</span>' +
+      '</div>' +
+
+      '<div class="sl-ov-body">' +
+      '<div class="sl-ov-item-card">' +
+      '<div class="sl-ov-item-details">' +
+      '<div class="sl-ov-item-name">Order Exception Request</div>' +
+      '<div class="sl-ov-item-meta">Current Order Subtotal: ' + escapeHtml(formatMoney(subtotal)) + ' (' + (cartData.items || []).length + ' lines)</div>' +
+      '</div>' +
+      '</div>' +
+
+      '<div class="sl-ov-form-box">' +
+      '<div class="sl-ov-field">' +
+      '<label for="sl-ex-type-select">Exception Type</label>' +
+      '<select id="sl-ex-type-select" class="sl-ov-select" data-sl-ex-type>' +
+      EX_TYPES.map(function (t) {
+        return '<option value="' + t[0] + '"' + (f.type === t[0] ? " selected" : "") + '>' + escapeHtml(t[1]) + '</option>';
+      }).join("") +
+      '</select>' +
+      '</div>' +
+
+      fields +
+
+      '<div class="sl-ov-field">' +
+      '<label for="sl-ex-reason-select">Reason for exception</label>' +
+      '<select id="sl-ex-reason-select" class="sl-ov-select" data-sl-ex-reason>' +
+      OVERRIDE_REASONS.map(function (r) {
+        return '<option value="' + r[0] + '"' + (f.reasonCode === r[0] ? " selected" : "") + '>' + escapeHtml(r[1]) + '</option>';
+      }).join("") +
+      '</select>' +
+      '</div>' +
+
+      '<div class="sl-ov-field">' +
+      '<label for="sl-ex-note">Note / Justification</label>' +
+      '<textarea id="sl-ex-note" class="sl-ov-textarea" rows="3" data-sl-ex-field="reasonText" placeholder="Why is this exception right?">' + escapeHtml(f.reasonText || "") + '</textarea>' +
+      '</div>' +
+
+      (f.stepUp ? (
+        '<div class="sl-ov-field">' +
+        '<label for="sl-ex-code">Authenticator code (6 digits)</label>' +
+        '<input id="sl-ex-code" type="text" inputmode="numeric" maxlength="6" class="sl-ov-input" data-sl-ex-code value="' + escapeHtml(f.code || "") + '" placeholder="123456">' +
+        '</div>'
+      ) : '') +
+
+      (f.error ? '<div class="sl-ov-error-banner" role="alert">' + escapeHtml(f.error) + '</div>' : '') +
+      '</div>' +
+      '</div>' +
+
+      '<div class="sl-ov-footer">' +
+      '<button type="button" class="sl-ov-btn-cancel" data-sl-ex-cancel>Cancel</button>' +
+      '<button type="button" class="sl-ov-btn-submit" data-sl-ex-submit' + (f.busy ? ' disabled' : '') + '>' +
+      (f.busy ? 'Submitting...' : 'Request exception') +
+      '</button>' +
+      '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderExceptionScreen() {
+    if (!exForm) return;
+    tabsEl.innerHTML = renderTabsHtml();
+    stepsEl.innerHTML = "";
+    footerEl.innerHTML = "";
+    bodyEl.innerHTML = renderExceptionScreenHtml();
+    bodyEl.scrollTop = 0;
   }
 
   function exceptionsHtml() {
@@ -3555,72 +3978,19 @@
       .map(overrideChipHtml)
       .join("");
 
-    if (!exForm) {
-      if (!overridesEnabled) {
-        return chips ? '<div class="sl-agent-line">' + chips + '</div>' + cartSavedHtml() : cartSavedHtml();
-      }
-      return '<div class="sl-agent-line">' + chips + '<button type="button" class="sl-agent-btn-exception" data-sl-ex-open><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add order exception</button></div>' + cartSavedHtml();
-    }
     if (!overridesEnabled) {
-      exForm = null;
-      return cartSavedHtml();
-    }
-
-    var f = exForm;
-    var fields = "";
-    if (f.type === "request_discount") fields = exField("percent", "Discount percent", f.values.percent, "e.g. 5") + exField("amount", "or amount off", f.values.amount, "e.g. 40.00");
-    else if (f.type === "request_shipping") fields = exField("price", "Shipping price (0 for free)", f.values.price, "e.g. 0");
-    else if (f.type === "request_moq") fields = "<p class=\"sl-agent-hint\">This order will be allowed below the customer's minimum order quantity.</p>";
-    else if (f.type === "request_increment") fields = "<p class=\"sl-agent-hint\">This order will be allowed even though its quantity isn't a whole number of packs.</p>";
-    else if (f.type === "request_credit") fields = "<p class=\"sl-agent-hint\">This order will be allowed to go past the customer's available credit, up to its total. An approver may need to agree.</p>";
-    else if (f.type === "request_address") {
-      fields =
-        "<p class=\"sl-agent-hint\">Used for this order only. It is not saved to the customer's address book.</p>" +
-        exField("company", "Company / name", f.values.company, "") +
-        exField("address1", "Address", f.values.address1, "") +
-        exField("address2", "Apartment, suite", f.values.address2, "") +
-        exField("city", "City", f.values.city, "") +
-        exField("provinceCode", "State / province code", f.values.provinceCode, "e.g. TX") +
-        exField("zip", "Postal code", f.values.zip, "") +
-        exField("countryCode", "Country code", f.values.countryCode, "e.g. US") +
-        exField("phone", "Phone", f.values.phone, "");
-    } else {
-      var taxable = f.values.taxable !== "false";
-      fields =
-        exField("title", "What is it?", f.values.title, "e.g. Setup fee") +
-        exField("quantity", "Quantity", f.values.quantity === undefined ? "1" : f.values.quantity, "1") +
-        exField("price", "Price per unit", f.values.price, "e.g. 50.00") +
-        '<label class="sl-nc-check"><input type="checkbox" data-sl-ex-taxable' + (taxable ? " checked" : "") + "> Tax applies to this item</label>" +
-        (taxable ? exField("taxCode", "Tax code", f.values.taxCode, "e.g. SERVICES-STD") : "") +
-        exField("accountingCode", "Accounting code (optional)", f.values.accountingCode, "");
+      return chips ? '<div class="sl-agent-line">' + chips + '</div>' + cartSavedHtml() : cartSavedHtml();
     }
 
     return (
-      '<div class="sl-agent-line">' + chips +
-      '<div class="sl-agent-ov-form">' +
-      "<label>Exception" +
-      '<select data-sl-ex-type>' + EX_TYPES.map(function (t) {
-        return '<option value="' + t[0] + '"' + (f.type === t[0] ? " selected" : "") + ">" + t[1] + "</option>";
-      }).join("") + "</select>" +
-      "</label>" +
-      fields +
-      "<label>Reason" +
-      '<select data-sl-ex-reason>' + OVERRIDE_REASONS.map(function (r) {
-        return '<option value="' + r[0] + '"' + (f.reasonCode === r[0] ? " selected" : "") + ">" + r[1] + "</option>";
-      }).join("") + "</select>" +
-      "</label>" +
-      exField("reasonText", "Note", f.reasonText, "Why is this right?") +
-      (f.stepUp
-        ? "<label>Authenticator code" +
-        '<input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" data-sl-ex-code aria-label="6-digit authenticator code" value="' + escapeHtml(f.code || "") + '" placeholder="123456">' +
-        "</label>"
-        : "") +
-      (f.error ? '<p class="sl-agent-error" role="alert">' + escapeHtml(f.error) + "</p>" : "") +
-      '<div class="sl-agent-ov-buttons">' +
-      '<button type="button" class="sl-agent-start" data-sl-ex-submit' + (f.busy ? " disabled" : "") + ">Request</button>" +
-      '<button type="button" class="sl-agent-link" data-sl-ex-cancel>Cancel</button>' +
-      "</div>" +
-      "</div></div>"
+      '<div class="sl-agent-line">' +
+      chips +
+      '<button type="button" class="sl-agent-btn-exception" data-sl-ex-open>' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>' +
+      'Add order exception' +
+      '</button>' +
+      '</div>' +
+      cartSavedHtml()
     );
   }
 
@@ -3630,19 +4000,19 @@
 
     if (!String(f.reasonText || "").trim()) {
       f.error = "Say why this is right.";
-      refreshFooter();
+      renderExceptionScreen();
       return;
     }
     var code = String(f.code || "").split(" ").join("");
     if (f.stepUp && code.length !== 6) {
       f.error = "Enter the 6-digit code from your authenticator app.";
-      refreshFooter();
+      renderExceptionScreen();
       return;
     }
 
     f.busy = true;
     f.error = "";
-    refreshFooter();
+    renderExceptionScreen();
 
     var checked = f.stepUp
       ? agentSessionPost({ intent: "mfa_verify", code: code, purpose: "step_up" })
@@ -3652,7 +4022,7 @@
       if (!check.ok) {
         f.busy = false;
         f.error = "That code isn't right. Check your authenticator app and try again.";
-        refreshFooter();
+        renderExceptionScreen();
         return null;
       }
 
@@ -3673,14 +4043,16 @@
 
         if (!result.ok) {
           f.error = body.message || "That didn't work.";
+          renderExceptionScreen();
         } else if (body.status === "DENIED" && body.denyReason === "STEP_UP_REQUIRED") {
           f.stepUp = true;
           f.error = "Enter a fresh code from your authenticator app.";
+          renderExceptionScreen();
         } else {
           exForm = null;
+          setStep(0);
+          return loadAgentOverrides().then(refreshFooter);
         }
-
-        return loadAgentOverrides().then(refreshFooter);
       });
     });
   }
@@ -3688,12 +4060,15 @@
   root.addEventListener("click", function (event) {
     if (event.target.closest("[data-sl-ex-open]")) {
       exForm = { type: "request_discount", values: {}, reasonCode: "VOLUME_COMMITMENT", reasonText: "", stepUp: false, code: "", busy: false, error: "" };
-      refreshFooter();
+      renderExceptionScreen();
+      return;
     } else if (event.target.closest("[data-sl-ex-cancel]")) {
       exForm = null;
-      refreshFooter();
+      setStep(0);
+      return;
     } else if (event.target.closest("[data-sl-ex-submit]")) {
       submitException();
+      return;
     }
   });
 
@@ -3713,10 +4088,10 @@
       exForm.type = event.target.value;
       exForm.values = {};
       exForm.error = "";
-      refreshFooter();
+      renderExceptionScreen();
     } else if (event.target.matches("[data-sl-ex-taxable]")) {
       exForm.values.taxable = event.target.checked ? "true" : "false";
-      refreshFooter();
+      renderExceptionScreen();
     } else if (event.target.matches("[data-sl-ex-reason]")) {
       exForm.reasonCode = event.target.value;
     }
@@ -3732,18 +4107,28 @@
   })();
   function footerActionsHtml() {
     var checkoutBtn = '<a href="/checkout" class="sl-cart-checkout" data-sl-checkout>' + escapeHtml(i18n.checkout) + "</a>";
-    if (!window.sparklayerAgentContextId || !agentQuoteProxyUrl || !quotesEnabled) {
-      return checkoutBtn;
+    var quoteBtn = "";
+
+    if (window.sparklayerAgentContextId && agentQuoteProxyUrl && quotesEnabled) {
+      quoteBtn = '<button type="button" class="sl-agent-quote-btn" data-sl-quote-create' + (agentPanel && agentPanel.quoteSaving ? " disabled" : "") + ">" +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' +
+        (agentPanel && agentPanel.quoteSaving ? "Saving quote…" : "Save as quote") +
+        "</button>";
+    } else if (hasCustomer || customerQuoteProxyUrl) {
+      quoteBtn = '<button type="button" class="sl-agent-quote-btn" data-sl-customer-quote>' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' +
+        "Save as quote" +
+        "</button>";
     }
+
+    if (!quoteBtn) return checkoutBtn;
+
     return (
       '<div class="sl-cart-footer-actions">' +
-      '<button type="button" class="sl-agent-quote-btn" data-sl-quote-create' + (agentPanel.quoteSaving ? " disabled" : "") + ">" +
-      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>' +
-      (agentPanel.quoteSaving ? "Saving quote…" : "Save as quote") +
-      "</button>" +
+      quoteBtn +
       checkoutBtn +
       "</div>" +
-      (agentPanel.quoteMessage ? '<p class="sl-agent-quote-msg">' + escapeHtml(agentPanel.quoteMessage) + "</p>" : "")
+      (agentPanel && agentPanel.quoteMessage ? '<p class="sl-agent-quote-msg">' + escapeHtml(agentPanel.quoteMessage) + "</p>" : "")
     );
   }
 
@@ -3951,6 +4336,38 @@
 
   root.addEventListener("click", function (event) {
     // Save the cart as a quote (1-click direct save without prompt popup).
+    if (event.target.closest("[data-sl-customer-quote]")) {
+      var custBtn = event.target.closest("[data-sl-customer-quote]");
+      if (!customerQuoteProxyUrl) return;
+      var origText = custBtn.innerHTML;
+      custBtn.disabled = true;
+      custBtn.innerText = "Saving quote…";
+      fetch(customerQuoteProxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          customerId: customerId,
+          currency: (cartData && cartData.currency) || "USD",
+          lineItems: (cartData.items || []).map(function (it) {
+            return { variant_id: it.variant_id, quantity: it.quantity };
+          })
+        })
+      })
+        .then(function (res) { return res.json(); })
+        .then(function () {
+          custBtn.disabled = false;
+          custBtn.innerHTML = origText;
+          showToast("Quote saved successfully!");
+        })
+        .catch(function () {
+          custBtn.disabled = false;
+          custBtn.innerHTML = origText;
+          showToast("Could not save quote.");
+        });
+      return;
+    }
+
     if (event.target.closest("[data-sl-quote-create]")) {
       if (agentPanel.quoteSaving) return;
       agentPanel.quoteSaving = true;
@@ -4077,6 +4494,7 @@
     if (!agentSessionProxyUrl || !hasCustomer) return Promise.resolve();
     return safeFetchJson(agentSessionProxyUrl).then(function (result) {
       var session = result.ok && result.body && result.body.active ? result.body : null;
+      agentSessionCustomer = session && session.customer ? session.customer : null;
       renderAgentBanner(session);
       refreshFooter();
       loadAgentOverrides();
@@ -4206,55 +4624,254 @@
   }
 
   function openDrawer() {
-    watchAgentSession();
-    root.classList.add("is-open");
-    document.body.style.overflow = "hidden";
-    setStep(0);
-    loadAgentSession();
-    loadAgentPanel();
-    loadBuyerQuotes();
-    loadShoppingLists();
-    refreshCart();
-    fetchPaymentTerms();
-    fetchCreditInfo();
-    fetchCouponAvailability();
+    if (typeof isNativeDawnActive === "function" && isNativeDawnActive()) {
+      var dawn = getNativeHost().el;
+      if (dawn && typeof dawn.open === "function") {
+        try { dawn.open(); } catch (e) {}
+      }
+      syncDawnNativeDrawer();
+      loadAgentSession();
+      loadAgentPanel();
+      loadBuyerQuotes();
+      loadShoppingLists();
+      refreshCart();
+      fetchPaymentTerms();
+      fetchCreditInfo();
+      fetchCouponAvailability();
+      return;
+    }
+    // Native theme drawer only: with no theme drawer there is nothing to open.
   }
 
+  var isClosingDrawer = false;
   function closeDrawer() {
-    root.classList.remove("is-open");
+    console.log("🔴 [cart-drawer.js] closeDrawer() called, isClosingDrawer:", isClosingDrawer);
+    if (isClosingDrawer) return;
+    isClosingDrawer = true;
+    setTimeout(function () { isClosingDrawer = false; }, 300);
+
+    // Impulse: close through the theme's own close button so it also clears
+    // html.js-drawer-open / lock-scroll and the page overlay.
+    var impulseHost = getNativeHost();
+    if (impulseHost && impulseHost.kind === "impulse" && impulseHost.el.classList.contains("drawer--is-open")) {
+      var themeClose = impulseHost.el.querySelector(".js-drawer-close, .drawer__close button, .drawer__close a");
+      if (themeClose) themeClose.click();
+      setTimeout(function () {
+        if (impulseHost.el.classList.contains("drawer--is-open")) {
+          impulseHost.el.classList.remove("drawer--is-open");
+          document.documentElement.classList.remove("js-drawer-open", "lock-scroll");
+        }
+      }, 400);
+      document.dispatchEvent(new CustomEvent("sparklayer:drawer:closed"));
+      return;
+    }
+
+    // Warehouse: close the way a shopper does, through the header's own cart toggle.
+    var warehouseHost = getNativeHost();
+    if (warehouseHost && warehouseHost.kind === "warehouse" && warehouseHost.el.getAttribute("aria-hidden") === "false") {
+      var whToggles = document.querySelectorAll('[data-action="toggle-mini-cart"]');
+      for (var wt = 0; wt < whToggles.length; wt++) {
+        if (warehouseHost.el.contains(whToggles[wt]) || !whToggles[wt].getClientRects().length) continue;
+        whToggles[wt].click();
+        break;
+      }
+      // If the theme did not react to the click, shut it by hand.
+      setTimeout(function () {
+        if (warehouseHost.el.getAttribute("aria-hidden") === "false") {
+          warehouseHost.el.setAttribute("aria-hidden", "true");
+          var open = document.querySelectorAll('[data-action="toggle-mini-cart"][aria-expanded="true"]');
+          for (var o = 0; o < open.length; o++) open[o].setAttribute("aria-expanded", "false");
+        }
+      }, 400);
+      document.dispatchEvent(new CustomEvent("sparklayer:drawer:closed"));
+      return;
+    }
+
+    // Prestige: close through the dialog's own hide() so it also unlocks the
+    // page scroll (html.lock) and runs the theme's leave animation.
+    var prestigeHost = getNativeHost();
+    if (prestigeHost && prestigeHost.kind === "prestige" && prestigeHost.el.hasAttribute("open")) {
+      if (typeof prestigeHost.el.hide === "function") {
+        try { prestigeHost.el.hide(); } catch (e) {}
+      } else {
+        prestigeHost.el.removeAttribute("open");
+      }
+      document.dispatchEvent(new CustomEvent("sparklayer:drawer:closed"));
+      return;
+    }
+
+    // 1. Dawn theme custom element <cart-drawer>
+    var dawn = document.querySelector("cart-drawer");
+    console.log("🔴 [cart-drawer.js] Dawn element:", dawn);
+    if (dawn) {
+      if (typeof dawn.close === "function") {
+        try {
+          dawn.close();
+          console.log("🔴 [cart-drawer.js] dawn.close() invoked");
+        } catch (e) {
+          console.error("🔴 [cart-drawer.js] dawn.close() error:", e);
+        }
+      }
+      dawn.classList.remove("active", "animate", "is-open");
+      dawn.removeAttribute("open");
+      dawn.setAttribute("aria-hidden", "true");
+    }
+
+    // 2. All theme drawer containers across themes (Horizon, Prestige, Impulse, etc.)
+    var themeDrawers = document.querySelectorAll(
+      "cart-drawer-component, theme-drawer, #CartDrawer, .cart-drawer, .drawer, #sidebar-cart, [data-cart-drawer], .drawer--cart, x-drawer[id*='cart']"
+    );
+    console.log("🔴 [cart-drawer.js] Found drawers to close:", themeDrawers.length);
+    for (var i = 0; i < themeDrawers.length; i++) {
+      var td = themeDrawers[i];
+      if (td !== root) {
+        if (typeof td.close === "function") {
+          try { td.close(); } catch (e) {}
+        }
+        var dlg = td.querySelector && td.querySelector("dialog");
+        if (dlg && typeof dlg.close === "function") {
+          try { dlg.close(); } catch (e) {}
+        }
+        td.classList.remove("active", "animate", "is-open");
+        td.removeAttribute("open");
+        td.setAttribute("aria-hidden", "true");
+      }
+    }
+
+    // 3. Trigger native overlay click if present to let theme run its cleanup
+    var overlay = document.getElementById("CartDrawer-Overlay") || document.querySelector(".cart-drawer__overlay");
+    if (overlay && typeof overlay.click === "function") {
+      try {
+        console.log("🔴 [cart-drawer.js] Clicking overlay:", overlay);
+        overlay.click();
+      } catch (e) {}
+    }
+
+    // 4. Close SparkLayer Root
+    root.classList.remove("is-open", "is-expanded");
+
+    // 5. Restore page body scrolling
+    document.body.classList.remove("overflow-hidden", "sl-drawer-active");
     document.body.style.overflow = "";
+
+    // 6. Reset any forms
+    if (overrideForm || exForm) {
+      overrideForm = null;
+      exForm = null;
+      setStep(0);
+    }
+    lastDawnIsOpen = false;
+    document.dispatchEvent(new CustomEvent("sparklayer:drawer:closed"));
+    console.log("🔴 [cart-drawer.js] closeDrawer() complete.");
   }
 
-  var nativeCartDrawer = document.getElementById("cart-drawer");
-  var pageWrapper = document.querySelector(".page-wrapper");
+  window.__slCloseDrawer = function (e) {
+    console.log("🔴 [cart-drawer.js] window.__slCloseDrawer called", e);
+    if (e && typeof e.stopPropagation === "function") {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    closeDrawer();
+  };
 
-  if (nativeCartDrawer && pageWrapper) {
-    new MutationObserver(function () {
-      pageWrapper.classList.remove("page-wrapper--drawer-open");
-      if (!root.classList.contains("is-open")) openDrawer();
-    }).observe(nativeCartDrawer, { attributes: true, attributeFilter: ["class", "open"] });
+  // Product cards / embeds add to cart via raw /cart/add.js fetch
+  // The product-card / PDP widgets add through /cart/add.js themselves, so the
+  // theme never learns about it and keeps its drawer shut. Open it the way a
+  // shopper would: through the theme's own cart icon (which also runs its
+  // open animation). Skipped when it is already open, as the icon toggles.
+  function isNativeDrawerOpen(host) {
+    var el = host.el;
+    // Only Horizon's panel is a <dialog>; for the others `inner` is just a wrapper
+    // that can carry an unrelated `open` attribute.
+    return el.hasAttribute("open") ||
+      el.classList.contains("active") ||
+      el.classList.contains("is-open") ||
+      el.classList.contains("drawer--is-open") ||
+      (host.kind === "horizon" && host.inner && host.inner.open === true) ||
+      (host.kind === "warehouse" && el.getAttribute("aria-hidden") === "false");
   }
 
-  // Product cards / embeds (wholesale-pricing-card.js, wholesale-pricing.js,
-  // wholesale-pricing-embed.js) add to cart via a raw /cart/add.js fetch that
-  // bypasses the native theme cart-add flow, so the MutationObserver above
-  // never fires for them. Without this listener the drawer's cart data goes
-  // stale until it's closed/reopened (or the page is refreshed).
+  function openNativeThemeDrawer() {
+    var host = getNativeHost();
+    if (!host || isNativeDrawerOpen(host)) return;
+    // Dawn's <cart-drawer> has its own open(): use it straight away rather than
+    // waiting on a header-icon click that may not be bound.
+    if (host.kind === "dawn" && typeof host.el.open === "function") {
+      try { host.el.open(); return; } catch (e) { /* fall back to the icon click below */ }
+    }
+    // If the icon click did not open it (the theme's handler may not be bound
+    // yet, or may skip the click), call the drawer element's own open().
+    setTimeout(function () {
+      var now = getNativeHost();
+      if (!now || isNativeDrawerOpen(now) || typeof now.el.open !== "function") return;
+      slDebug("icon click did not open the drawer, calling open() directly");
+      try { now.el.open(); } catch (e) { console.error("[SparkLayer] drawer open() failed:", e); }
+    }, 300);
+    var selectors = [
+      '[data-action="toggle-mini-cart"]',
+      "[data-cart-toggle]",
+      "#cart-icon-bubble",
+      '[aria-controls="cart-drawer"]',
+      "a.navlink--cart",
+      "cart-icon",
+      'a[href="/cart"]',
+      CART_TRIGGER_SELECTOR
+    ];
+    for (var s = 0; s < selectors.length; s++) {
+      var triggers = document.querySelectorAll(selectors[s]);
+      for (var i = 0; i < triggers.length; i++) {
+        var trigger = triggers[i];
+        // Skip anything inside the drawer itself (e.g. Broadcast's close button also
+        // carries data-cart-toggle) and anything not actually shown.
+        if (root.contains(trigger) || host.el.contains(trigger) || !trigger.getClientRects().length) continue;
+        if (getComputedStyle(trigger).visibility === "hidden") continue;
+        trigger.click();
+        return;
+      }
+    }
+  }
+
   document.addEventListener("sparklayer:cart:updated", function () {
+    slDebug("cart:updated, native host =", (getNativeHost() || {}).kind);
+    if (typeof isNativeDawnActive === "function" && isNativeDawnActive()) {
+      // Open first; the cart and prices load while the panel slides in.
+      try { openNativeThemeDrawer(); } catch (e) { console.error("[SparkLayer] drawer open failed:", e); }
+      refreshCart().then(function () {
+        slDebug("refreshCart done, items =", (cartData.items || []).length, "lines html =", (bodyEl.querySelector(".sl-cart-lines") || {}).innerHTML && bodyEl.querySelector(".sl-cart-lines").innerHTML.length);
+        syncDawnNativeDrawer();
+        openNativeThemeDrawer();
+      }).catch(function (err) {
+        console.error("[SparkLayer] cart refresh failed:", err);
+        try { syncDawnNativeDrawer(); openNativeThemeDrawer(); } catch (e) {}
+      });
+      return;
+    }
+    // No theme drawer: an add to cart only refreshes data. The theme's own popup announces it.
     if (root.classList.contains("is-open")) {
       refreshCart();
-    } else {
-      openDrawer();
     }
   });
 
+  document.addEventListener("sparklayer:native:opened", function () {
+    openDrawer();
+  });
+  document.addEventListener("sparklayer:native:closed", function () {
+    if (root.classList.contains("is-open")) closeDrawer();
+  });
+
   var CART_TRIGGER_SELECTOR = [
+    'a[href*="/cart"]',
+    'a[href$="/cart"]',
     '[data-testid="cart-drawer-trigger"]',
     '[aria-controls="cart-drawer"]',
-    'a[href$="/cart"]',
-    'a[href*="/cart#"]',
-    'a[href*="/cart?"]',
+    '[aria-controls="sidebar-cart"]',
+    '[aria-controls*="cart"]',
+    '[data-action="open-drawer"]',
+    '[data-action="open-cart"]',
+    '[data-drawer-id*="cart"]',
+    '[data-drawer-id="sidebar-cart"]',
     "[data-cart-drawer-toggle]",
+    "[data-cart-drawer-trigger]",
     "#cart-icon-bubble",
     'a[class*="cart-icon" i]',
     'button[class*="cart-icon" i]',
@@ -4267,6 +4884,9 @@
     'button[aria-label*="cart" i]',
     'summary[aria-label*="cart" i]',
     "cart-icon",
+    ".header__icon--cart",
+    ".header__icon-wrapper[href*='cart']",
+    ".tap-area[href*='cart']"
   ].join(", ");
 
   window.addEventListener(
@@ -4275,13 +4895,99 @@
       var trigger = event.target.closest(CART_TRIGGER_SELECTOR);
       if (!trigger) return;
       if (root.contains(trigger)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      event.stopPropagation();
-      openDrawer();
+
+      if (typeof isNativeDawnActive === "function" && isNativeDawnActive()) {
+        attachToDawnNow();
+      }
+      // No theme drawer: the theme's own behaviour (popup / cart page) is left alone.
     },
     true
   );
+
+  var themeObserverBound = false;
+  var lastDawnIsOpen = false;
+  function bindThemeDrawerObserver() {
+    if (themeObserverBound) return;
+    var nativeDrawer = document.querySelector(
+      "cart-drawer-component, #sidebar-cart, cart-drawer, theme-drawer, #CartDrawer, form#mini-cart.mini-cart, [data-cart-drawer], .drawer--cart, x-drawer[id*='cart']"
+    );
+    if (!nativeDrawer) return;
+    themeObserverBound = true;
+
+    var nativeObserver = new MutationObserver(function () {
+      var isOpen =
+        nativeDrawer.hasAttribute("open") ||
+        nativeDrawer.getAttribute("aria-hidden") === "false" ||
+        nativeDrawer.classList.contains("active") ||
+        nativeDrawer.classList.contains("is-open") ||
+        nativeDrawer.classList.contains("drawer--is-open") ||
+        (nativeDrawer.querySelector && !!nativeDrawer.querySelector("dialog[open]"));
+
+      // CRITICAL: Only trigger on closed -> open transition, never in a loop!
+      if (isOpen === lastDawnIsOpen) return;
+      lastDawnIsOpen = isOpen;
+
+      if (isOpen) {
+        if (typeof isNativeDawnActive === "function" && isNativeDawnActive()) {
+          syncDawnNativeDrawer();
+          loadAgentSession();
+          loadAgentPanel();
+          loadBuyerQuotes();
+          loadShoppingLists();
+          refreshCart();
+          fetchPaymentTerms();
+          fetchCreditInfo();
+          fetchCouponAvailability();
+        }
+      }
+    });
+
+    // subtree: Horizon toggles `open` on the inner <dialog>, not the component.
+    nativeObserver.observe(nativeDrawer, {
+      attributes: true,
+      attributeFilter: ["class", "open", "aria-hidden"],
+      subtree: true
+    });
+
+    // Horizon morphs the drawer's DOM on every cart update, which drops our
+    // mounted root and the marker attribute; put them back (idempotent).
+    var remountDebounce = null;
+    new MutationObserver(function () {
+      if (!isNativeDawnActive()) return;
+      var host = getNativeHost();
+      if (host.kind === "dawn" || !host.inner) return;
+      if (host.inner.contains(root) && host.inner.getAttribute("data-sl-native-inner") === host.kind) return;
+      if (remountDebounce) clearTimeout(remountDebounce);
+      remountDebounce = setTimeout(syncDawnNativeDrawer, 30);
+    }).observe(nativeDrawer, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-sl-native-inner"]
+    });
+  }
+
+  // Horizon's own cart events (add to cart from PDP/cards, qty changes in the
+  // theme UI) — SparkLayer's own edits use /cart/change.js and don't fire it.
+  document.addEventListener("cart:update", function () {
+    if (!isNativeDawnActive()) return;
+    refreshCart().then(syncDawnNativeDrawer);
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindThemeDrawerObserver);
+  } else {
+    bindThemeDrawerObserver();
+  }
+  var bodyDrawerObserver = new MutationObserver(function () {
+    if (!themeObserverBound) {
+      bindThemeDrawerObserver();
+      if (themeObserverBound) {
+        bodyDrawerObserver.disconnect();
+      }
+    }
+  });
+  bodyDrawerObserver.observe(document.body, { childList: true });
 
   // There's no more Shopify-side cart discount (see priceListPush.server.ts),
   // so line.final_price/original_price are always equal now. wholesalePricing
@@ -4293,11 +4999,10 @@
     var msrp = line.original_price;
     var unit = line.final_price;
     if (pricing && pricing.price != null) msrp = pricing.price;
+    if (pricing && pricing.wholesalePrice != null) unit = pricing.wholesalePrice;
     var tierPrice = pricing ? pickTierPrice(pricing.tiers, line.quantity) : null;
-    if (tierPrice != null && tierPrice < msrp) {
+    if (tierPrice != null && tierPrice < unit) {
       unit = tierPrice;
-    } else {
-      unit = msrp;
     }
     // An approved price exception for the customer replaces the price shown.
     var exception = typeof agentOverrideFor === "function" ? agentOverrideFor(line) : null;
@@ -4313,16 +5018,43 @@
     var unitPrice = displayPrice.unit;
     var showMsrp = displayPrice.msrp > unitPrice;
     var lineTotal = unitPrice * line.quantity;
-    var meta = [line.variant_title, line.sku ? "SKU: " + line.sku : null]
-      .filter(Boolean)
-      .join(" | ");
+    // "SKU: X | Metal: Waterproof Stainless Steel | Color: Gold plated": the SKU first, then each
+    // option with its name. Falls back to the plain variant title when the options are not in
+    // the cart data.
+    // The Color option goes on its own line below the rest.
+    var realOptions = (line.options_with_values || [])
+      .filter(function (o) { return o && o.value && o.value !== "Default Title"; });
+    var isColor = function (o) { return /^colou?r$/i.test(String(o.name || "").trim()); };
+    var optionParts = realOptions
+      .filter(function (o) { return !isColor(o); })
+      .map(function (o) { return o.name ? o.name + ": " + o.value : o.value; });
+    var colorParts = realOptions
+      .filter(isColor)
+      .map(function (o) { return o.name + ": " + o.value; });
+    if (!realOptions.length && line.variant_title && line.variant_title !== "Default Title") {
+      optionParts = [line.variant_title];
+    }
+    // Color sits on its own line; when the drawer is expanded the CSS puts it back on the same
+    // line, after a " | " separator (.sl-meta-sep is hidden otherwise).
+    var metaMain = [line.sku ? "SKU: " + line.sku : null].concat(optionParts).filter(Boolean).join(" | ");
+    var metaColor = colorParts.join(" | ");
+    var metaHtml = escapeHtml(metaMain) +
+      (metaColor
+        ? (metaMain ? '<span class="sl-meta-sep"> | </span>' : "") +
+          '<span class="sl-meta-color">' + escapeHtml(metaColor) + "</span>"
+        : "");
 
     return (
       '<div class="sl-cart-line" data-line-key="' + escapeHtml(line.key) + '">' +
+      '<div class="sl-cart-line-header">' +
       '<img src="' + escapeHtml(line.image || "") + '" alt="' + escapeHtml(line.product_title) + '" loading="lazy">' +
       '<div class="sl-cart-line-main">' +
-      '<p class="sl-cart-line-title">' + escapeHtml(line.product_title) + "</p>" +
-      (meta ? '<p class="sl-cart-line-meta">' + escapeHtml(meta) + "</p>" : "") +
+      '<p class="sl-cart-line-title">' +
+      (line.url || line.handle
+        ? '<a class="sl-cart-line-link" href="' + escapeHtml(line.url || "/products/" + line.handle) + '">' + escapeHtml(line.product_title) + "</a>"
+        : escapeHtml(line.product_title)) +
+      "</p>" +
+      (metaHtml ? '<p class="sl-cart-line-meta">' + metaHtml + "</p>" : "") +
       '<div class="sl-cart-line-actions">' +
       '<div class="sl-cart-qty">' +
       '<button type="button" data-sl-qty="-1">&minus;</button>' +
@@ -4331,13 +5063,16 @@
       "</div>" +
       '<button type="button" class="sl-cart-remove" data-sl-remove aria-label="' + escapeHtml(i18n.remove) + '">' + ICON_TRASH + "</button>" +
       "</div>" +
-      agentLineHtml(line) +
       "</div>" +
       '<div class="sl-cart-line-price">' +
-      '<span class="sl-price">' + formatMoney(lineTotal) + "</span>" +
-      '<span class="sl-per-unit">' + formatMoney(unitPrice) + escapeHtml(i18n.perUnit) + "</span>" +
-      (showMsrp ? '<span class="sl-msrp">' + escapeHtml(i18n.msrp) + ": " + formatMoney(displayPrice.msrp) + "</span>" : "") +
+      (pricingPending && !wholesalePricing[String(line.variant_id)]
+        ? '<span class="sl-price sl-price-loading" aria-label="Loading price"></span>'
+        : '<span class="sl-price">' + formatMoney(lineTotal) + "</span>" +
+          '<span class="sl-per-unit">' + formatMoney(unitPrice) + escapeHtml(i18n.perUnit) + "</span>" +
+          (showMsrp ? '<span class="sl-msrp">' + escapeHtml(i18n.msrp) + ": " + formatMoney(displayPrice.msrp) + "</span>" : "")) +
       "</div>" +
+      "</div>" +
+      agentLineHtml(line) +
       "</div>"
     );
   }
@@ -4346,7 +5081,7 @@
     var linesEl = bodyEl.querySelector(".sl-cart-lines");
     if (!linesEl) return;
 
-    var conflictHtml = cartConflictHtml();
+    var conflictHtml = listAddedBannerHtml() + cartConflictHtml();
 
     if (!cartData.items.length) {
       if (qo.saveListOpen) qo.saveListOpen = false;
@@ -4361,7 +5096,7 @@
 
     var subtotalEl = footerEl.querySelector(".sl-cart-subtotal-amount");
     var subtotalCountEl = footerEl.querySelector(".sl-cart-subtotal-count");
-    if (subtotalEl) subtotalEl.textContent = formatMoney(subtotal);
+    if (subtotalEl) subtotalEl.textContent = pricingPending ? "…" : formatMoney(subtotal);
 
     // An approved order discount is applied at checkout; the agent sees what it
     // comes to here, so the total they quote matches what the customer pays.
@@ -4391,6 +5126,516 @@
     if (qoActionsEl) qoActionsEl.innerHTML = quickOrderActionsInner();
   }
 
+  function showToast(msg) {
+    var oldToast = document.querySelector(".sl-native-toast");
+    if (oldToast) oldToast.remove();
+
+    var toast = document.createElement("div");
+    toast.className = "sl-native-toast";
+    toast.innerHTML =
+      '<svg width="18" height="18" viewBox="0 0 20 20" fill="#22c55e"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>' +
+      '<span>' + escapeHtml(msg) + '</span>';
+    document.body.appendChild(toast);
+    setTimeout(function () {
+      if (toast.parentElement) toast.remove();
+    }, 3500);
+  }
+
+  // A white success card at the top right: green tick, message, a close X and a green bar that
+  // runs down while it waits to disappear.
+  function showNoticeToast(msg) {
+    var old = document.querySelector(".sl-notice-toast");
+    if (old) old.remove();
+
+    var duration = 4000;
+    var toast = document.createElement("div");
+    toast.className = "sl-notice-toast";
+    toast.setAttribute("role", "status");
+    toast.innerHTML =
+      '<div class="sl-notice-toast-row">' +
+      '<svg class="sl-notice-toast-icon" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#1f8a63"/><path d="m7.5 12.5 3 3 6-7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+      '<span class="sl-notice-toast-text">' + escapeHtml(msg) + "</span>" +
+      '<button type="button" class="sl-notice-toast-close" aria-label="Close">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      "</button>" +
+      "</div>" +
+      '<div class="sl-notice-toast-bar" style="animation-duration:' + duration + 'ms"></div>';
+    document.body.appendChild(toast);
+
+    var timer = setTimeout(close, duration);
+    function close() {
+      clearTimeout(timer);
+      if (toast.parentElement) toast.remove();
+    }
+    toast.querySelector(".sl-notice-toast-close").addEventListener("click", close);
+  }
+
+  function updateDawnLinePrices() {
+    var dawn = document.querySelector("cart-drawer");
+    if (!dawn || !cartData || !cartData.items) return;
+
+    var dawnLines = Array.from(dawn.querySelectorAll(".cart-item, [id^='CartDrawer-Item-']"));
+    var wholesaleSubtotal = 0;
+
+    cartData.items.forEach(function (line, index) {
+      var display = lineDisplayPrice(line);
+      var unitPrice = display.unit;
+      var msrp = display.msrp;
+      var lineTotal = unitPrice * line.quantity;
+      var retailTotal = msrp * line.quantity;
+      wholesaleSubtotal += lineTotal;
+
+      var matchedEl = null;
+      for (var i = 0; i < dawnLines.length; i++) {
+        var el = dawnLines[i];
+        var attrId = el.dataset.variantId || el.dataset.id || el.getAttribute("data-key") || el.dataset.lineItemKey || el.id;
+        if (attrId && String(attrId).indexOf(String(line.variant_id)) !== -1) {
+          matchedEl = el;
+          break;
+        }
+        if (line.handle && el.querySelector('a[href*="/products/' + line.handle + '"]')) {
+          matchedEl = el;
+          break;
+        }
+        var input = el.querySelector('input[name="updates[]"], input[name="quantity"], [data-quantity-variant-id]');
+        if (input && (input.id.indexOf(String(line.variant_id)) !== -1 || input.dataset.quantityVariantId === String(line.variant_id))) {
+          matchedEl = el;
+          break;
+        }
+      }
+
+      if (!matchedEl && dawnLines[index]) {
+        matchedEl = dawnLines[index];
+      }
+
+      if (matchedEl) {
+        var formattedWsp = formatMoney(lineTotal);
+        var formattedMsrp = formatMoney(retailTotal);
+        var isTier = display.unit < display.msrp;
+
+        // 1. Line Total in right column
+        var totalsEl = matchedEl.querySelector(".cart-item__totals");
+        if (totalsEl) {
+          var totalTarget = totalsEl.querySelector(".cart-item__price-wrapper, .price, .price--end") || totalsEl;
+          var existingBadge = totalTarget.querySelector(".sl-b2b-price-badge");
+          if (!existingBadge || existingBadge.dataset.wsp !== formattedWsp) {
+            totalTarget.innerHTML =
+              '<div class="sl-b2b-price-badge" data-wsp="' + formattedWsp + '">' +
+                '<span class="sl-b2b-wholesale-price">' + formattedWsp + '</span>' +
+                (lineTotal < retailTotal
+                  ? '<s class="sl-b2b-msrp">' + formattedMsrp + '</s>'
+                  : '') +
+                (isTier ? '<span class="sl-b2b-tier-tag">Wholesale</span>' : '') +
+              '</div>';
+          }
+        }
+
+        // 2. Unit price under title in details
+        var detailsPriceEl = matchedEl.querySelector(
+          ".cart-item__details .cart-item__discounted-prices, .cart-item__details .cart-item__price-wrapper, .cart-item__details .product-option"
+        );
+        if (detailsPriceEl && isTier) {
+          var unitWsp = formatMoney(display.unit);
+          var unitMsrp = formatMoney(display.msrp);
+          var existingUnitBadge = detailsPriceEl.querySelector(".sl-b2b-price-badge");
+          if (!existingUnitBadge || existingUnitBadge.dataset.wsp !== unitWsp) {
+            detailsPriceEl.innerHTML =
+              '<div class="sl-b2b-price-badge" data-wsp="' + unitWsp + '">' +
+                '<span class="sl-b2b-wholesale-price">' + unitWsp + '</span>' +
+                '<s class="sl-b2b-msrp">' + unitMsrp + '</s>' +
+              '</div>';
+          }
+        }
+      }
+    });
+
+    var subtotalEls = dawn.querySelectorAll(
+      ".totals__subtotal-value, .drawer__footer .price, [data-cart-subtotal]"
+    );
+    var formattedSub = formatMoney(wholesaleSubtotal);
+    subtotalEls.forEach(function (subEl) {
+      if (subEl.dataset.slSubtotal !== formattedSub) {
+        subEl.dataset.slSubtotal = formattedSub;
+        subEl.textContent = formattedSub;
+      }
+    });
+  }
+
+  function injectDawnSkuBar(dawn) {
+    var target = dawn.querySelector("cart-drawer-items, #CartDrawer-CartItems, .cart-drawer__items, .cart-items");
+    if (!target) return;
+    var parent = target.parentElement;
+    if (!parent || parent.querySelector(".sl-native-sku-bar")) return;
+
+    var bar = document.createElement("div");
+    bar.className = "sl-native-sku-bar";
+    bar.innerHTML =
+      '<div class="sl-native-sku-input-wrap">' +
+        '<svg class="sl-native-sku-icon" viewBox="0 0 20 20" fill="currentColor">' +
+          '<path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>' +
+        '</svg>' +
+        '<input type="text" class="sl-native-sku-input" placeholder="Add products by SKU or Barcode">' +
+        '<button type="button" class="sl-native-barcode-btn" title="Barcode quick add">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M3 5v14M8 5v14M12 5v14M17 5v14M21 5v14"/>' +
+          '</svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="sl-native-sku-results" hidden></div>';
+
+    parent.insertBefore(bar, target);
+
+    var input = bar.querySelector(".sl-native-sku-input");
+    var resultsEl = bar.querySelector(".sl-native-sku-results");
+    var barcodeBtn = bar.querySelector(".sl-native-barcode-btn");
+    var debounceTimer = null;
+
+    input.addEventListener("input", function () {
+      var query = input.value.trim();
+      if (!query || query.length < 2) {
+        resultsEl.hidden = true;
+        resultsEl.innerHTML = "";
+        return;
+      }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        fetch(proxyUrl + "?q=" + encodeURIComponent(query))
+          .then(function (res) { return res.json(); })
+          .then(function (data) {
+            var variants = data.variants || [];
+            if (!variants.length) {
+              resultsEl.innerHTML = '<div class="sl-native-sku-empty">No products found</div>';
+              resultsEl.hidden = false;
+              return;
+            }
+            var html = "";
+            variants.slice(0, 5).forEach(function (v) {
+              var pTitle = v.productTitle || "";
+              var vTitle = v.variantTitle && v.variantTitle !== "Default Title" ? " (" + v.variantTitle + ")" : "";
+              var sku = v.sku ? "SKU: " + v.sku : "";
+              var priceText = v.price ? "$" + parseFloat(v.price).toFixed(2) : "";
+              html +=
+                '<div class="sl-native-sku-item" data-variant-id="' + v.id + '">' +
+                  '<div class="sl-native-sku-item-info">' +
+                    (v.image ? '<img class="sl-native-sku-img" src="' + v.image + '" alt="">' : '<div class="sl-native-sku-img"></div>') +
+                    '<div class="sl-native-sku-meta">' +
+                      '<p class="sl-native-sku-title">' + escapeHtml(pTitle + vTitle) + '</p>' +
+                      '<p class="sl-native-sku-sub">' + escapeHtml((sku ? sku + ' · ' : '') + priceText) + '</p>' +
+                    '</div>' +
+                  '</div>' +
+                  '<button type="button" class="sl-native-sku-add-btn" data-vid="' + v.id + '">+ Add</button>' +
+                '</div>';
+            });
+            resultsEl.innerHTML = html;
+            resultsEl.hidden = false;
+          })
+          .catch(function () { resultsEl.hidden = true; });
+      }, 250);
+    });
+
+    resultsEl.addEventListener("click", function (e) {
+      var addBtn = e.target.closest(".sl-native-sku-add-btn");
+      if (!addBtn) return;
+      var vid = addBtn.dataset.vid;
+      addBtn.innerText = "Adding...";
+      addBtn.disabled = true;
+
+      fetch("/cart/add.js", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: vid, quantity: 1 })
+      })
+      .then(function () {
+        input.value = "";
+        resultsEl.hidden = true;
+        showToast("Item added to cart!");
+        refreshCart().then(function () {
+          setTimeout(updateDawnLinePrices, 150);
+          setTimeout(updateDawnLinePrices, 500);
+        });
+        document.dispatchEvent(new CustomEvent("cart:refresh"));
+      })
+      .catch(function () {
+        addBtn.innerText = "+ Add";
+        addBtn.disabled = false;
+      });
+    });
+
+    barcodeBtn.addEventListener("click", function () {
+      if (typeof openBarcodeScannerModal === "function") {
+        openBarcodeScannerModal();
+      } else {
+        input.focus();
+        input.placeholder = "Scan barcode with scanner or type SKU...";
+      }
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!bar.contains(e.target)) resultsEl.hidden = true;
+    });
+  }
+
+  function hookDawnCheckout(dawn) {
+    var checkoutBtn = dawn.querySelector('#CartDrawer-Checkout, button[name="checkout"], .cart__checkout-button');
+    if (!checkoutBtn || checkoutBtn.dataset.slB2bBound === "true") return;
+    checkoutBtn.dataset.slB2bBound = "true";
+
+    checkoutBtn.addEventListener("click", function (event) {
+      if (!hasCustomer && !window.sparklayerAgentContextId) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+
+      var origText = checkoutBtn.innerHTML;
+      checkoutBtn.disabled = true;
+      checkoutBtn.classList.add("sl-b2b-btn-loading");
+      checkoutBtn.innerText = "Creating B2B Order...";
+
+      var hasTerms = Boolean(eligiblePaymentTerms && eligiblePaymentTerms.length > 0);
+      var isNet = hasTerms && (eligiblePaymentTerms.indexOf("NET_30") !== -1 || eligiblePaymentTerms.indexOf("NET_60") !== -1 || eligiblePaymentTerms.indexOf("NET_90") !== -1 || (netTermsDueInDays && netTermsDueInDays > 0));
+      var payMethod = isNet ? "account" : (hasTerms ? "advance" : "pay_now");
+
+      fetch(checkoutProxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lineItems: (cartData.items || []).map(function (it) {
+            return { variant_id: it.variant_id, quantity: it.quantity };
+          }),
+          currency: (cartData && cartData.currency) || "USD",
+          paymentMethod: payMethod,
+          contextId: window.sparklayerAgentContextId || undefined
+        })
+      })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.invoiceUrl) {
+          window.location.href = data.invoiceUrl;
+        } else if (data.orderName) {
+          window.location.href = "/account/orders";
+        } else {
+          window.location.href = "/checkout";
+        }
+      })
+      .catch(function () {
+        checkoutBtn.disabled = false;
+        checkoutBtn.classList.remove("sl-b2b-btn-loading");
+        checkoutBtn.innerHTML = origText;
+        window.location.href = "/checkout";
+      });
+    }, true);
+  }
+
+  function hookDawnFooter(dawn) {
+    var checkoutBtn = dawn.querySelector('#CartDrawer-Checkout, button[name="checkout"], .cart__checkout-button');
+    if (!checkoutBtn) return;
+    var container = checkoutBtn.parentElement;
+    if (!container) return;
+    var footerRoot = container.parentElement;
+
+    // 1. Remove any legacy terms notice element if present
+    var oldNotice = (footerRoot && footerRoot.querySelector(".sl-b2b-terms-notice")) || container.querySelector(".sl-b2b-terms-notice");
+    if (oldNotice) oldNotice.remove();
+
+    // 2. Save as quote placed AFTER checkout button inside container
+    var oldQuote = container.querySelector(".sl-native-quote-btn") || (footerRoot && footerRoot.querySelector(".sl-native-quote-btn"));
+    if (oldQuote) oldQuote.remove();
+
+    var quoteBtn = document.createElement("button");
+    quoteBtn.type = "button";
+    quoteBtn.className = "sl-native-quote-btn";
+    quoteBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>' +
+      '</svg>' +
+      '<span>Save as quote</span>';
+
+    quoteBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!cartData || !cartData.items || !cartData.items.length) {
+        showToast("Cart is empty");
+        return;
+      }
+      var origText = quoteBtn.innerHTML;
+      quoteBtn.innerText = "Saving quote...";
+      quoteBtn.disabled = true;
+
+      fetch(customerQuoteProxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          customerId: customerId,
+          currency: (cartData && cartData.currency) || "USD",
+          lineItems: (cartData.items || []).map(function (it) {
+            return { variant_id: it.variant_id, quantity: it.quantity };
+          })
+        })
+      })
+      .then(function (res) { return res.json(); })
+      .then(function () {
+        quoteBtn.disabled = false;
+        quoteBtn.innerHTML = origText;
+        showToast("Quote saved successfully!");
+      })
+      .catch(function () {
+        quoteBtn.disabled = false;
+        quoteBtn.innerHTML = origText;
+        showToast("Quote saved successfully!");
+      });
+    });
+
+    container.appendChild(quoteBtn);
+    hookDawnCheckout(dawn);
+  }
+
+  // Warehouse's dropdown hangs from the header, so it can use everything from where it starts
+  // down to the bottom of the window. Measure that and hand it to the CSS (--sl-wh-avail).
+  var warehouseFitBound = false;
+  function fitWarehouseHeight() {
+    var host = getNativeHost();
+    if (!host || host.kind !== "warehouse") return;
+    var top = host.el.getBoundingClientRect().top;
+    var avail = Math.max(320, Math.floor(window.innerHeight - top - 12));
+    host.el.style.setProperty("--sl-wh-avail", avail + "px");
+  }
+  function bindWarehouseFit() {
+    if (warehouseFitBound) return;
+    warehouseFitBound = true;
+    window.addEventListener("resize", fitWarehouseHeight);
+    window.addEventListener("scroll", fitWarehouseHeight, { passive: true });
+  }
+
+  function attachToDawnNow() {
+    var host = getNativeHost();
+    if (!host || !host.inner) return;
+    var inner = host.inner;
+
+    if (!inner.contains(root)) {
+      root.classList.add("sl-native-mode");
+      inner.appendChild(root);
+    }
+
+    if (host.kind !== "dawn") {
+      // CSS hides every other child of the panel, so nodes the theme re-renders
+      // into it stay hidden without per-class selectors.
+      if (inner.getAttribute("data-sl-native-inner") !== host.kind) {
+        inner.setAttribute("data-sl-native-inner", host.kind);
+      }
+      // Dawn's cart-drawer visibility rules skip any element carrying the marker.
+      if (host.el !== inner && host.el.getAttribute("data-sl-native-inner") !== host.kind) {
+        host.el.setAttribute("data-sl-native-inner", host.kind);
+      }
+      // Warehouse's panel is a <form>: stop anything inside it from submitting
+      // to /cart (SparkLayer drives checkout itself).
+      if (host.kind === "warehouse" && !host.el.hasAttribute("data-sl-no-submit")) {
+        host.el.setAttribute("data-sl-no-submit", "1");
+        host.el.addEventListener("submit", function (e) { e.preventDefault(); }, true);
+      }
+      if (host.kind === "warehouse") {
+        bindWarehouseFit();
+        fitWarehouseHeight();
+      }
+      // No theme variables known for this panel: take its real text colour.
+      // (currentColor can't be used in the stylesheet — it would resolve per
+      // element, e.g. to the white check badge, and hide it.)
+      if (host.kind === "inner") {
+        var panelColor = getComputedStyle(inner).color;
+        if (panelColor) {
+          root.style.setProperty("--sln-text", panelColor);
+          root.style.setProperty("--sln-muted", "color-mix(in srgb, " + panelColor + " 65%, transparent)");
+          root.style.setProperty("--sln-border", "color-mix(in srgb, " + panelColor + " 18%, transparent)");
+        }
+      }
+      return;
+    }
+
+    var dawnHeader = inner.querySelector(".drawer__header");
+    if (dawnHeader) dawnHeader.style.setProperty("display", "none", "important");
+    var dawnItems = inner.querySelector("cart-drawer-items");
+    if (dawnItems) dawnItems.style.setProperty("display", "none", "important");
+    var dawnFooter = inner.querySelector(".drawer__footer");
+    if (dawnFooter) dawnFooter.style.setProperty("display", "none", "important");
+    var dawnWarnings = inner.querySelector(".cart-drawer__warnings");
+    if (dawnWarnings) dawnWarnings.style.setProperty("display", "none", "important");
+    var dawnEmpty = inner.querySelector(".drawer__inner-empty");
+    if (dawnEmpty) dawnEmpty.style.setProperty("display", "none", "important");
+  }
+
+  function attachToNativeThemeDrawer() {
+    if (isNativeDawnActive()) {
+      attachToDawnNow();
+      return;
+    }
+    root.classList.remove("sl-native-mode");
+  }
+
+  var syncDawnDebounce = null;
+  function syncDawnNativeDrawer() {
+    if (!isNativeDawnActive()) return;
+    attachToDawnNow();
+    if (syncDawnDebounce) clearTimeout(syncDawnDebounce);
+    syncDawnDebounce = setTimeout(function () {
+      var host = getNativeHost();
+      if (!host || !host.inner) return;
+      var dawn = host.el;
+      var inner = host.inner;
+
+      // Mounts root and hides the theme's own header/items/footer
+      attachToDawnNow();
+
+      // Safety net: an open theme dialog with no size means the native
+      // mount is invisible, so fall back to the SparkLayer overlay.
+      if (host.kind === "horizon") {
+        setTimeout(function () {
+          var dr = inner.getBoundingClientRect();
+          if (inner.open && (dr.width === 0 || dr.height === 0)) {
+            nativeFailed = true;
+            console.warn("[SparkLayer] Native drawer rendered at 0 size, falling back to the SparkLayer drawer.");
+            inner.removeAttribute("data-sl-native-inner");
+            try { inner.close(); } catch (e) {}
+            root.classList.remove("sl-native-mode");
+            document.body.appendChild(root);
+            openDrawer();
+          }
+        }, 600);
+      }
+
+      if (activeTab === "account") {
+        root.classList.remove("is-cart-tab");
+        root.classList.add("is-account-tab");
+        dawn.classList.add("is-account-tab");
+        dawn.classList.remove("is-cart-tab");
+        stepsEl.innerHTML = "";
+        stepsEl.hidden = true;
+        footerEl.innerHTML = "";
+        if (bodyEl) {
+          if (accountView === "dashboard") bodyEl.innerHTML = renderAccountDashboardBody();
+          else if (accountView === "orders") bodyEl.innerHTML = renderAccountOrdersListBody();
+          else if (accountView === "reports") bodyEl.innerHTML = renderAccountReportsBody();
+          else bodyEl.innerHTML = renderAccountDashboardBody();
+        }
+      } else {
+        root.classList.add("is-cart-tab");
+        root.classList.remove("is-account-tab");
+        dawn.classList.remove("is-account-tab");
+        dawn.classList.add("is-cart-tab");
+        if (!bodyEl.children || !bodyEl.children.length) {
+          setStep(0);
+        }
+      }
+
+      var heading = inner.querySelector(".drawer__heading");
+      if (heading) heading.style.display = "none";
+
+      if (tabsEl) {
+        tabsEl.innerHTML = renderTabsHtml();
+      }
+    }, 25);
+  }
+
   function isValidCart(cart) {
     return !!cart && Array.isArray(cart.items);
   }
@@ -4400,6 +5645,15 @@
       wholesalePricing = {};
       return Promise.resolve();
     }
+    // The proxy round trip is slow, so prices fetched in the last minute are
+    // reused and only the variants not seen yet are asked for.
+    var now = Date.now();
+    var stale = variantIds.filter(function (id) {
+      var at = wholesalePricingAt[String(id)];
+      return !at || now - at > 60000 || !wholesalePricing[String(id)];
+    });
+    if (!stale.length) return Promise.resolve();
+    variantIds = stale;
     var url = variantPricingProxyUrl + "?ids=" + encodeURIComponent(variantIds.join(","));
     // The cart's currency picks which per-currency wholesale price the server reads.
     if (cartData && cartData.currency) {
@@ -4408,10 +5662,12 @@
     return fetch(url)
       .then(function (res) { return res.json(); })
       .then(function (body) {
-        var next = {};
+        var next = wholesalePricing;
         (body.variants || []).forEach(function (v) {
+          wholesalePricingAt[String(v.variantId)] = Date.now();
           next[String(v.variantId)] = {
             price: v.price != null ? Math.round(v.price * 100) : null,
+            wholesalePrice: v.wholesalePrice != null ? Math.round(v.wholesalePrice * 100) : null,
             tiers: (v.tiers || []).map(function (t) {
               return { minQuantity: t.minQuantity, price: Math.round(t.price * 100) };
             }),
@@ -4421,9 +5677,7 @@
         });
         wholesalePricing = next;
       })
-      .catch(function () {
-        wholesalePricing = {};
-      });
+      .catch(function () { /* keep whatever prices are already known */ });
   }
 
   // The theme's own header cart-icon custom element (Horizon: cart-icon.js)
@@ -4431,13 +5685,209 @@
   // sessionStorage sync, and animation correctly — we just need to call it
   // whenever we mutate the cart outside the native theme flow, since that
   // element only listens for Shopify's native cart events by default.
+  // Turn on with localStorage.slDebug = "1" to trace the header count update.
+  function slDebug() {
+    try {
+      if (window.localStorage && window.localStorage.getItem("slDebug")) {
+        console.log.apply(console, ["[SparkLayer header]"].concat(Array.prototype.slice.call(arguments)));
+      }
+    } catch (e) {}
+  }
+
   function syncHeaderCartIcon(itemCount) {
+    slDebug("syncHeaderCartIcon called, count =", itemCount);
+    var handled = false;
     document.querySelectorAll("cart-icon").forEach(function (icon) {
       if (typeof icon.renderCartBubble === "function") {
         icon.renderCartBubble(itemCount);
+        handled = true;
       }
     });
+    slDebug("theme cart-icon handled it:", handled);
+    if (!handled) {
+      setThemeCountDirect(itemCount);
+      syncThemeCartCount();
+    }
   }
+
+  // Sets the number straight on the theme's count element (<cart-count
+  // data-cart-count="4">4</cart-count> and similar leaf elements), outside the
+  // drawer. Instant, and needs no server round trip.
+  function setThemeCountDirect(count) {
+    if (typeof count !== "number" || isNaN(count)) return;
+    var host = getNativeHost();
+    // .header__cart-count is Warehouse's bare <span>0</span> beside the cart icon.
+    document.querySelectorAll("cart-count, [data-cart-count], .header__cart-count").forEach(function (el) {
+      if (root.contains(el) || (host && host.el && host.el.contains(el))) return;
+      if (el.children.length) return;
+      el.setAttribute("data-cart-count", String(count));
+      el.textContent = String(count);
+      el.style.display = "";
+    });
+    // Dawn-family bubble: <div class="cart-count-bubble"><span aria-hidden>3</span>
+    // <span class="visually-hidden">3 items</span></div>. The number is in a child.
+    document.querySelectorAll(".cart-count-bubble, .cart-link__bubble").forEach(function (el) {
+      if (root.contains(el) || (host && host.el && host.el.contains(el))) return;
+      var shown = el.querySelector('span[aria-hidden="true"]');
+      var spoken = el.querySelector(".visually-hidden");
+      if (shown) shown.textContent = String(count);
+      else if (!el.children.length) el.textContent = String(count);
+      if (spoken) spoken.textContent = count + (count === 1 ? " item" : " items");
+      el.style.display = count > 0 ? "" : "none";
+    });
+    slDebug("set count directly:", count);
+  }
+
+  // Every other theme only redraws its header count on its own cart events, so
+  // a cart change made here would show only after a page refresh. The header
+  // section is re-rendered by the server (Section Rendering API, which reads the
+  // cart cookie we just changed) and only the count bubble is copied over, so
+  // the theme's own icon and listeners stay untouched.
+  var THEME_COUNT_SELECTOR = [
+    ".cart-count-bubble",
+    ".cart-link__bubble",
+    "cart-count",
+    ".header__cart-count",
+    "[data-cart-count]",
+    "[data-header-cart-count]",
+    '[class*="cart-count" i]',
+    '[class*="count-bubble" i]',
+    '[class*="cart-bubble" i]'
+  ].join(", ");
+  var THEME_CART_ICON_SELECTOR = [
+    "#cart-icon-bubble",
+    "[data-cart-toggle]",
+    ".header__icon--cart",
+    '[aria-controls="cart-drawer"]',
+    'a[href$="/cart"]',
+    'a[class*="cart-link" i]',
+    'a[class*="cart-icon" i]',
+    'button[class*="cart-icon" i]'
+  ].join(", ");
+  var themeCountTimer = null;
+
+  // Updates the theme's own count element in place. Replacing it would create a
+  // new custom element (Broadcast's <cart-count>) that can redraw itself from
+  // its own stale state; changing the attributes and text keeps the instance.
+  function copyCountNode(live, fresh) {
+    if (live.tagName !== fresh.tagName) {
+      live.replaceWith(document.importNode(fresh, true));
+      return;
+    }
+    Array.prototype.slice.call(live.attributes).forEach(function (attr) {
+      if (!fresh.hasAttribute(attr.name) && attr.name !== "style") live.removeAttribute(attr.name);
+    });
+    Array.prototype.slice.call(fresh.attributes).forEach(function (attr) {
+      live.setAttribute(attr.name, attr.value);
+    });
+    live.innerHTML = fresh.innerHTML;
+    live.style.display = "";
+  }
+
+  function syncThemeCartCount() {
+    clearTimeout(themeCountTimer);
+    themeCountTimer = setTimeout(function () {
+      var host = getNativeHost();
+      var outside = function (el) {
+        return !root.contains(el) && !(host && host.el && host.el.contains(el));
+      };
+      var ids = [];
+      document.querySelectorAll(THEME_CART_ICON_SELECTOR + ", " + THEME_COUNT_SELECTOR).forEach(function (el) {
+        var section = el.closest('[id^="shopify-section-"]');
+        if (!section || !outside(el)) return;
+        var id = section.id.replace("shopify-section-", "");
+        if (ids.indexOf(id) === -1) ids.push(id);
+      });
+      slDebug("header sections found:", ids);
+      if (!ids.length) return;
+
+      fetch(window.location.pathname + "?sections=" + encodeURIComponent(ids.join(",")), {
+        headers: { Accept: "application/json" }
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          ids.forEach(function (id) {
+            var liveSection = document.getElementById("shopify-section-" + id);
+            slDebug("section", id, "live:", !!liveSection, "fresh html:", !!(data && data[id]));
+            if (!liveSection || !data || !data[id]) return;
+            var fresh = new DOMParser().parseFromString(data[id], "text/html").body;
+            var pick = function (scope, selector, keep) {
+              return Array.prototype.filter.call(scope.querySelectorAll(selector), keep || function () { return true; });
+            };
+
+            // Icons: copy the count into the matching icon (creating it when the
+            // cart was empty and the theme drew no bubble at all).
+            var liveIcons = pick(liveSection, THEME_CART_ICON_SELECTOR, outside);
+            var freshIcons = pick(fresh, THEME_CART_ICON_SELECTOR);
+            liveIcons.forEach(function (icon, i) {
+              var match = freshIcons[i];
+              if (!match || match.tagName !== icon.tagName) return;
+              var liveCount = icon.matches(THEME_COUNT_SELECTOR) ? null : icon.querySelector(THEME_COUNT_SELECTOR);
+              var freshCount = match.matches(THEME_COUNT_SELECTOR) ? null : match.querySelector(THEME_COUNT_SELECTOR);
+              if (freshCount && liveCount) copyCountNode(liveCount, freshCount);
+              else if (freshCount) icon.appendChild(document.importNode(freshCount, true));
+              else if (liveCount) liveCount.style.display = "none";
+            });
+
+            // Counts that sit beside the icon instead of inside it.
+            var liveCounts = pick(liveSection, THEME_COUNT_SELECTOR, outside);
+            var freshCounts = pick(fresh, THEME_COUNT_SELECTOR);
+            slDebug("icons live/fresh:", liveIcons.length, freshIcons.length, "counts live/fresh:", liveCounts.length, freshCounts.length);
+            liveCounts.forEach(function (node, i) {
+              if (freshCounts[i] && freshCounts[i].tagName === node.tagName) {
+                copyCountNode(node, freshCounts[i]);
+              } else if (!freshCounts[i]) {
+                node.style.display = "none";
+              }
+            });
+          });
+        })
+        .catch(function (err) {
+          slDebug("header sync failed:", err && err.message);
+        });
+    }, 120);
+  }
+
+  // The header must follow every cart change, whichever path made it (our widgets,
+  // the drawer, the product page, the theme's own buttons), so this does not
+  // depend on the drawer's own refresh: it watches the cart requests themselves.
+  function syncHeaderFromCart() {
+    fetch("/cart.js", { headers: { Accept: "application/json" } })
+      .then(function (res) { return res.json(); })
+      .then(function (cart) {
+        if (!cart || typeof cart.item_count !== "number") return;
+        slDebug("header count from /cart.js:", cart.item_count);
+        if (document.querySelector("cart-icon")) {
+          syncHeaderCartIcon(cart.item_count);
+        } else {
+          setThemeCountDirect(cart.item_count);
+          syncThemeCartCount();
+        }
+      })
+      .catch(function () {});
+  }
+
+  document.addEventListener("sparklayer:cart:updated", function () {
+    setTimeout(syncHeaderFromCart, 60);
+  });
+
+  var CART_MUTATION_URL = new RegExp("/cart/(add|change|update|clear)(\\.js)?([?]|$)");
+
+  (function watchCartRequests() {
+    if (window.__slCartWatch || typeof window.fetch !== "function") return;
+    window.__slCartWatch = true;
+    var originalFetch = window.fetch;
+    window.fetch = function (input) {
+      var result = originalFetch.apply(this, arguments);
+      try {
+        var url = typeof input === "string" ? input : input && input.url;
+        if (url && CART_MUTATION_URL.test(url)) {
+          result.then(function () { setTimeout(syncHeaderFromCart, 150); }, function () {});
+        }
+      } catch (e) {}
+      return result;
+    };
+  })();
 
   // Neither /cart.js nor /cart/change.js requests are sequenced, so quick
   // successive actions (a qty +/- click before the previous one resolves, or
@@ -4478,8 +5928,14 @@
         syncHeaderCartIcon(cart.item_count);
         scheduleAgentCartSave();
         var variantIds = (cart.items || []).map(function (item) { return item.variant_id; });
+        // Lines show straight away; only the price waits for the (slow) pricing
+        // call, so an unpriced line shows a placeholder instead of the MSRP.
+        pricingPending = variantIds.some(function (id) { return !wholesalePricing[String(id)]; });
+        if (pricingPending && currentStep === 0) renderCartLines();
         return fetchWholesalePricing(variantIds).then(function () {
+          pricingPending = false;
           if (currentStep === 0) renderCartLines();
+          if (typeof updateDawnLinePrices === "function" && isNativeDawnActive()) updateDawnLinePrices();
         });
       });
   }
@@ -4524,7 +5980,7 @@
   // quantities, or scan barcodes with the camera. Every row is checked on its
   // own; the good ones go into the cart and each bad one says why.
 
-  var qo = { open: false, menu: false, text: "", rows: null, busy: false, message: "", scan: false, scanMessage: "", lists: null, listsOpen: false, listsMessage: "", tab: "sku", saveListOpen: false, saveListMessage: "", saveListName: "" };
+  var qo = { open: false, menu: false, text: "", rows: null, busy: false, message: "", scan: false, scanMessage: "", tab: "sku", saveListOpen: false, saveListMessage: "", saveListName: "" };
   var qoStream = null;
   var qoTimer = null;
 
@@ -4589,14 +6045,17 @@
   // "Actions" menu (SparkLayer's My Cart has the same): upload a file, paste
   // rows, scan barcodes.
   function quickOrderActionsInner() {
-    if (!agentPanel.isAgent || !quickOrderProxyUrl) return "";
+    if (!quickOrderProxyUrl && !agentPanel.isAgent) return "";
     var hasItems = !!(cartData.items && cartData.items.length);
     return (
       (scanSupported()
         ? '<button type="button" class="sl-qo-scan-btn" data-sl-qo-scan title="' + (qo.scan ? "Stop scanning" : "Scan a barcode with the camera") + '" aria-label="Scan a barcode">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M11 8v8M15 8v8"/></svg></button>'
         : "") +
-      '<button type="button" class="sl-qo-actions-btn" data-sl-qo-menu aria-haspopup="true" aria-expanded="' + (qo.menu ? "true" : "false") + '">Actions \u25BE</button>' +
+      '<button type="button" class="sl-qo-actions-btn" data-sl-qo-menu aria-haspopup="true" aria-expanded="' + (qo.menu ? "true" : "false") + '">Actions' +
+      '<svg class="sl-qo-actions-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">' +
+      '<path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>' +
+      "</svg></button>" +
       (qo.menu
         ? '<div class="sl-qo-menu">' +
         '<button type="button" data-sl-qo-toggle>' +
@@ -4607,14 +6066,19 @@
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>' +
         'Save shopping list' +
         '</button>' +
-        '<button type="button" data-sl-sl-open' + (qo.lists && qo.lists.length > 0 ? '' : ' disabled') + '>' +
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>' +
-        'Shopping lists' +
-        '</button>' +
         '<button type="button" data-sl-qo-clear' + (hasItems ? '' : ' disabled') + '>' +
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>' +
         'Clear cart' +
         '</button>' +
+        (shoppingLists && shoppingLists.length
+          ? '<div class="sl-qo-menu-divider"></div>' +
+            '<div class="sl-qo-menu-label">Shopping lists</div>' +
+            '<button type="button" class="sl-qo-menu-plain" data-sl-sl-viewall>View All</button>' +
+            shoppingLists.slice(0, 5).map(function (l) {
+              return '<button type="button" class="sl-qo-menu-plain" data-sl-sl-add="' + escapeHtml(l.id) + '" title="' + escapeHtml(l.name) + '">' +
+                '<span class="sl-qo-menu-name">' + escapeHtml(l.name) + "</span></button>";
+            }).join("")
+          : "") +
         "</div>"
         : "") +
       '<input type="file" accept=".csv,.txt,text/csv,text/plain" hidden data-sl-qo-file-input>' +
@@ -4624,7 +6088,7 @@
   }
 
   function quickOrderInner() {
-    if (!agentPanel.isAgent || !quickOrderProxyUrl) return "";
+    if (!quickOrderProxyUrl && !agentPanel.isAgent) return "";
     var html = "";
 
     if (qo.scan) {
@@ -4679,29 +6143,6 @@
         '</div>' +
         (qo.saveListMessage ? '<p class="sl-agent-error" role="alert" style="margin-top:10px;">' + escapeHtml(qo.saveListMessage) + '</p>' : '') +
         '</div>';
-    }
-
-    if (qo.listsOpen) {
-      html += '<div class="sl-qo-panel" style="border:1px solid #e2e8f0;border-radius:4px;padding:16px;margin:12px 0;background:#ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.05);">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-        '<h4 style="font-size:15px;font-weight:600;color:#1e293b;margin:0;">Shopping lists</h4>' +
-        '<button type="button" data-sl-sl-open aria-label="Close" style="background:none;border:none;color:#64748b;cursor:pointer;padding:2px 4px;display:flex;align-items:center;">' +
-        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-        '</button>' +
-        '</div>';
-      if (qo.listsMessage) html += '<p class="sl-agent-hint" style="margin:4px 0 8px;">' + escapeHtml(qo.listsMessage) + '</p>';
-      if (!qo.lists) html += '<p class="sl-agent-hint">Loading...</p>';
-      else if (!qo.lists.length) html += '<p class="sl-agent-hint">No saved lists yet. Fill the cart, then Actions \u2192 Save shopping list.</p>';
-      else {
-        html += '<table class="sl-qo-table" style="width:100%;margin-top:8px;"><tbody>' + qo.lists.map(function (l) {
-          return '<tr><td><strong>' + escapeHtml(l.name) + '</strong><br><span class="sl-agent-row-meta">' +
-            escapeHtml(l.itemCount) + ' item' + (l.itemCount === 1 ? '' : 's') + (l.createdByAgent ? ' · saved by your sales agent' : '') +
-            '</span></td><td style="text-align:right;white-space:nowrap">' +
-            '<button type="button" class="sl-agent-start" data-sl-sl-add="' + escapeHtml(l.id) + '"' + (qo.busy ? ' disabled' : '') + '>Add to cart</button> ' +
-            '<button type="button" class="sl-agent-link" data-sl-sl-delete="' + escapeHtml(l.id) + '">Delete</button></td></tr>';
-        }).join('') + '</tbody></table>';
-      }
-      html += '</div>';
     }
 
     if (qo.open) {
@@ -4797,6 +6238,11 @@
     var video = bodyEl.querySelector("[data-sl-qo-video]");
     if (!qo.scan || !video || qoStream) return;
 
+    // The sticky totals/coupon footer can cover the lower half of the scanner
+    // on short windows, so bring the whole scanner to the top of the body.
+    var scanBox = bodyEl.querySelector(".sl-qo-scan-wrapper");
+    if (scanBox && scanBox.scrollIntoView) scanBox.scrollIntoView({ block: "start" });
+
     loadBarcodeScanner(function () {
       if (!window.BarcodeDetector) {
         qo.scan = false;
@@ -4811,9 +6257,11 @@
       var lastAt = 0;
       var isMobileDevice = !!((window.matchMedia && window.matchMedia("(max-width: 768px)").matches) ||
         /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
-      var constraints = isMobileDevice
-        ? { video: { facingMode: qo.facingMode || "environment" } }
-        : { video: true };
+      var constraints = qo.deviceId
+        ? { video: { deviceId: { exact: qo.deviceId } } }
+        : isMobileDevice
+          ? { video: { facingMode: qo.facingMode || "environment" } }
+          : { video: true };
       var getStream = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
         ? navigator.mediaDevices.getUserMedia(constraints).catch(function () {
           return navigator.mediaDevices.getUserMedia({ video: true });
@@ -4852,32 +6300,132 @@
     });
   }
 
+  var barcodeToastTimer = null;
+  function showBarcodeToast(message, type, duration) {
+    clearTimeout(barcodeToastTimer);
+    var drawer = root.querySelector(".sl-cart-drawer") || root;
+    var toast = drawer.querySelector(".sl-barcode-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.className = "sl-barcode-toast";
+      drawer.appendChild(toast);
+    }
+
+    var iconHtml = "";
+    if (type === "loading") {
+      iconHtml = '<span class="sl-barcode-spinner" aria-hidden="true"></span>';
+    } else if (type === "success") {
+      iconHtml = '<svg class="sl-barcode-toast-icon" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
+    } else if (type === "error") {
+      iconHtml = '<svg class="sl-barcode-toast-icon" width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>';
+    }
+
+    toast.className = "sl-barcode-toast sl-barcode-toast--" + (type || "info");
+    toast.innerHTML = iconHtml + '<span class="sl-barcode-toast-msg">' + escapeHtml(message) + '</span>';
+    toast.hidden = false;
+
+    if (duration) {
+      barcodeToastTimer = setTimeout(function () {
+        hideBarcodeToast();
+      }, duration);
+    }
+  }
+
+  function hideBarcodeToast() {
+    clearTimeout(barcodeToastTimer);
+    var toast = root.querySelector(".sl-barcode-toast");
+    if (toast) {
+      toast.classList.add("sl-barcode-toast--leaving");
+      setTimeout(function () {
+        if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 200);
+    }
+  }
+
+  function showBarcodeLoadingLine(title, subtitle) {
+    var linesEl = bodyEl.querySelector(".sl-cart-lines");
+    if (!linesEl) return;
+
+    var emptyEl = linesEl.querySelector(".sl-cart-empty");
+    if (emptyEl) emptyEl.style.display = "none";
+
+    var existing = linesEl.querySelector("#sl-barcode-loading-line");
+    if (!existing) {
+      existing = document.createElement("div");
+      existing.id = "sl-barcode-loading-line";
+      existing.className = "sl-cart-line sl-cart-line--loading";
+      linesEl.insertBefore(existing, linesEl.firstChild);
+    }
+
+    existing.innerHTML =
+      '<div class="sl-cart-line-header">' +
+      '<div class="sl-barcode-img-placeholder">' +
+      '<span class="sl-barcode-spinner" aria-hidden="true"></span>' +
+      '</div>' +
+      '<div class="sl-cart-line-main" style="display:flex;flex-direction:column;justify-content:center;">' +
+      '<p class="sl-cart-line-title sl-barcode-pulse-title">' +
+      escapeHtml(title || "Scanning barcode from image...") +
+      '<span class="sl-barcode-badge-scanning">Processing</span>' +
+      '</p>' +
+      '<p class="sl-cart-line-meta" style="color:#64748b;margin-top:4px;">' +
+      escapeHtml(subtitle || "Detecting barcode & adding product to cart...") +
+      '</p>' +
+      '</div>' +
+      '</div>';
+  }
+
+  function hideBarcodeLoadingLine() {
+    var existing = bodyEl.querySelector("#sl-barcode-loading-line");
+    if (existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+    var linesEl = bodyEl.querySelector(".sl-cart-lines");
+    if (linesEl && (!cartData.items || !cartData.items.length)) {
+      var emptyEl = linesEl.querySelector(".sl-cart-empty");
+      if (emptyEl) emptyEl.style.display = "";
+    }
+  }
+
   function scanCode(code) {
+    showBarcodeLoadingLine("Adding item to cart...", "Barcode: " + code);
+    showBarcodeToast("Checking barcode and adding to cart...", "loading");
     return postJson(quickOrderProxyUrl, { text: code + ", 1" }).then(function (result) {
       var row = result.ok && result.body && result.body.rows ? result.body.rows[0] : null;
       if (!row || row.status !== "ok") {
-        qo.scanMessage = code + ": " + (row ? QO_ERRORS[row.error] || row.error : "couldn't check it");
+        hideBarcodeLoadingLine();
+        var errMsg = code + ": " + (row ? QO_ERRORS[row.error] || row.error : "couldn't check it");
+        qo.scanMessage = errMsg;
         renderQuickOrder();
+        showBarcodeToast(errMsg, "error", 3500);
         return null;
       }
+      showBarcodeLoadingLine("Adding " + (row.title || "product") + "...", "Quantity: 1");
       return fetch("/cart/add.js", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: Number(row.variantId), quantity: 1 }),
       }).then(function (res) {
+        hideBarcodeLoadingLine();
         if (res.ok) {
           stopScanning();
           qo.scan = false;
           qo.scanMessage = "";
           renderQuickOrder();
           announce("Added " + row.title + " to cart.");
+          showBarcodeToast("Added " + (row.title || "product") + " to cart!", "success", 2500);
           return refreshCart();
         } else {
-          qo.scanMessage = code + ": " + QO_ERRORS.ADD_FAILED;
+          var failMsg = code + ": " + QO_ERRORS.ADD_FAILED;
+          qo.scanMessage = failMsg;
           renderQuickOrder();
+          showBarcodeToast(failMsg, "error", 3500);
           return null;
         }
       });
+    }).catch(function () {
+      hideBarcodeLoadingLine();
+      showBarcodeToast("Could not check barcode.", "error", 3500);
+      return null;
     });
   }
 
@@ -4992,16 +6540,22 @@
   function readBarcodesFromPhoto(file) {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      window.alert("That photo is too large. Use one under 10 MB.");
+      showBarcodeToast("Photo is too large. Use an image under 10 MB.", "error", 3500);
       return;
     }
 
+    // Show loading row right where products are added in the cart
+    showBarcodeLoadingLine("Scanning barcode from image...", "Detecting product barcode...");
+    showBarcodeToast("Scanning image for barcode...", "loading");
+
     decodePhoto(file).then(function (codes) {
       if (!codes || !codes.length) {
-        window.alert("No barcode found in that photo. Try a closer, clearer picture.");
+        hideBarcodeLoadingLine();
+        showBarcodeToast("No barcode found. Please try a closer, clearer picture.", "error", 3500);
         return;
       }
-      // Add detected barcode directly to cart like live scanner!
+      showBarcodeLoadingLine("Barcode detected!", "Looking up product & adding to cart...");
+      showBarcodeToast("Barcode detected! Adding to cart...", "loading");
       var chain = Promise.resolve();
       codes.forEach(function (code) {
         chain = chain.then(function () {
@@ -5009,6 +6563,9 @@
         });
       });
       return chain;
+    }).catch(function () {
+      hideBarcodeLoadingLine();
+      showBarcodeToast("Could not read image. Please try again.", "error", 3500);
     });
   }
 
@@ -5037,67 +6594,129 @@
     }
   });
 
-  // A click anywhere else closes the Actions menu.
+  // ---- Shopping lists: load the customer's saved lists, show them in the Actions menu and
+  // on the My Account tab, add one back to the cart, delete one.
+
+  var isFetchingShoppingLists = false;
+  function loadShoppingLists() {
+    if (!shoppingListsProxyUrl || !hasCustomer || isFetchingShoppingLists) return Promise.resolve();
+    isFetchingShoppingLists = true;
+    return safeFetchJson(shoppingListsProxyUrl)
+      .then(function (result) {
+        isFetchingShoppingLists = false;
+        shoppingLists = result.ok && result.body && result.body.lists ? result.body.lists : [];
+        renderQuickOrder();
+        if (activeTab === "account" && accountView === "dashboard") {
+          bodyEl.innerHTML = renderAccountDashboardBody();
+        }
+      })
+      .catch(function () {
+        isFetchingShoppingLists = false;
+      });
+  }
+
+  function formatListDate(value) {
+    var d = value ? new Date(value) : null;
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-US") : "";
+  }
+
+  function renderShoppingListsSection() {
+    var heading = '<h3 class="sl-cart-heading sl-cart-heading-spaced">Shopping Lists</h3>';
+    if (!shoppingLists || !shoppingLists.length) {
+      return heading + '<div class="sl-cart-account-empty-box" data-sl-shopping-lists>Your shopping lists will appear here once you’ve added one.</div>';
+    }
+    var rows = shoppingLists.map(function (l) {
+      var menuOpen = String(shoppingListMenuId) === String(l.id);
+      return '<tr>' +
+        '<td class="sl-sl-name">' + escapeHtml(l.name) + '</td>' +
+        '<td>' + escapeHtml(formatListDate(l.updatedAt || l.createdAt)) + '</td>' +
+        '<td class="sl-sl-actions"><div class="sl-sl-menu-wrap">' +
+        '<button type="button" class="sl-sl-row-btn" data-sl-sl-row-menu="' + escapeHtml(l.id) + '" aria-haspopup="true" aria-expanded="' + (menuOpen ? "true" : "false") + '">Actions' +
+        '<svg class="sl-qo-actions-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg></button>' +
+        (menuOpen
+          ? '<div class="sl-sl-row-menu">' +
+            '<button type="button" data-sl-sl-add="' + escapeHtml(l.id) + '" data-sl-sl-mode="existing">' + ICON_SYNC + 'Add items to existing cart</button>' +
+            '<button type="button" data-sl-sl-add="' + escapeHtml(l.id) + '" data-sl-sl-mode="new">' + ICON_SYNC + 'Create new cart</button>' +
+            '</div>'
+          : "") +
+        '</div>' +
+        '<button type="button" class="sl-cart-remove sl-sl-trash" data-sl-sl-delete="' + escapeHtml(l.id) + '" aria-label="Delete list">' + ICON_TRASH + '</button>' +
+        '</td></tr>';
+    }).join("");
+    return heading +
+      '<div class="sl-sl-table-wrap" data-sl-shopping-lists><table class="sl-sl-table"><thead><tr>' +
+      '<th>Name</th><th>Last Updated</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  // replaceCart false: add the list's items on top of the current cart ("Add items to existing
+  // cart"); true: empty the cart first, so it holds just the list ("Create new cart").
+  function addShoppingListToCart(id, replaceCart) {
+    var list = (shoppingLists || []).filter(function (l) { return String(l.id) === String(id); })[0];
+    if (!list || !list.items || !list.items.length) return;
+    qo.menu = false;
+    shoppingListMenuId = null;
+    renderQuickOrder();
+    var ready = replaceCart
+      ? fetch("/cart/clear.js", { method: "POST" }).catch(function () { }).then(function () { cartMutationVersion++; })
+      : Promise.resolve();
+    ready.then(function () {
+      return restoreAgentCartLines(list.items.map(function (i) { return { variantId: i.variantId, quantity: i.quantity }; }));
+    }).then(function (results) {
+      listAddedBanner = results.added.length > 0;
+      if (results.failed.length) {
+        showToast(results.failed.length + " item(s) couldn’t be added (sold out or no longer sold).");
+      }
+      return refreshCart().then(function () { setStep(0); });
+    });
+  }
+
+  function listAddedBannerHtml() {
+    if (!listAddedBanner) return "";
+    return '<div class="sl-cart-added-banner" role="status">' +
+      '<svg class="sl-cart-added-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>' +
+      '<div class="sl-cart-added-text"><strong>Items have been successfully added to your cart!</strong>' +
+      '<span>You can review your cart below before checking out</span></div>' +
+      '<button type="button" class="sl-cart-added-close" data-sl-sl-banner-close aria-label="Dismiss">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button></div>';
+  }
+
   root.addEventListener("click", function (event) {
-    if (qo.menu && !event.target.closest("[data-sl-qo-actions]")) {
+    var addBtn = event.target.closest("[data-sl-sl-add]");
+    var rowMenuBtn = event.target.closest("[data-sl-sl-row-menu]");
+    var delBtn = event.target.closest("[data-sl-sl-delete]");
+    if (event.target.closest("[data-sl-sl-banner-close]")) {
+      listAddedBanner = false;
+      renderCartLines();
+    } else if (addBtn) {
+      addShoppingListToCart(addBtn.getAttribute("data-sl-sl-add"), addBtn.getAttribute("data-sl-sl-mode") === "new");
+    } else if (event.target.closest("[data-sl-sl-viewall]")) {
       qo.menu = false;
-      renderQuickOrder();
+      if (agentPanel.isAgent) agentAccountSubTab = "customer";
+      showAccountTab();
+      var target = bodyEl.querySelector("[data-sl-shopping-lists]");
+      if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
+    } else if (rowMenuBtn) {
+      var rowId = rowMenuBtn.getAttribute("data-sl-sl-row-menu");
+      shoppingListMenuId = String(shoppingListMenuId) === String(rowId) ? null : rowId;
+      if (activeTab === "account" && accountView === "dashboard") bodyEl.innerHTML = renderAccountDashboardBody();
+    } else if (delBtn) {
+      if (!window.confirm("Delete this shopping list?")) return;
+      postJson(shoppingListsProxyUrl, { intent: "delete", id: delBtn.getAttribute("data-sl-sl-delete") }).then(function (result) {
+        if (!result.ok) showToast((result.body && result.body.message) || "Couldn’t delete it.");
+        return loadShoppingLists();
+      });
+    } else if (shoppingListMenuId && !event.target.closest(".sl-sl-menu-wrap")) {
+      shoppingListMenuId = null;
+      if (activeTab === "account" && accountView === "dashboard") bodyEl.innerHTML = renderAccountDashboardBody();
     }
   });
 
-  // ---- shopping lists (spec §3.2): save the cart as a list; add a list back.
-
-  function loadShoppingLists() {
-    return safeFetchJson(shoppingListsProxyUrl).then(function (result) {
-      qo.lists = result.ok && result.body && result.body.lists ? result.body.lists : [];
-      renderQuickOrder();
-    });
-  }
-
-  function saveShoppingList() {
-    var items = (cartData.items || []).map(function (i) {
-      return { variantId: String(i.variant_id), quantity: i.quantity, title: i.product_title || i.title, sku: i.sku };
-    });
-    if (!items.length) {
-      qo.listsOpen = true;
-      qo.listsMessage = "The cart is empty. Add items first.";
-      renderQuickOrder();
-      loadShoppingLists();
-      return;
-    }
-
-    var name = window.prompt("Name this shopping list:", "");
-    if (name === null) return;
-
-    postJson(shoppingListsProxyUrl, { intent: "create", name: name, items: items }).then(function (result) {
-      qo.listsOpen = true;
-      qo.listsMessage = result.ok ? "Saved \u201C" + name.trim() + "\u201D." : (result.body && result.body.message) || "Couldn't save the list.";
-      return loadShoppingLists();
-    });
-  }
-
-  function addShoppingListToCart(id) {
-    var list = (qo.lists || []).filter(function (l) { return String(l.id) === String(id); })[0];
-    if (!list) return;
-
-    qo.busy = true;
-    qo.listsMessage = "";
-    renderQuickOrder();
-
-    restoreAgentCartLines(list.items.map(function (i) { return { variantId: i.variantId, quantity: i.quantity }; })).then(function (results) {
-      qo.busy = false;
-      qo.listsMessage = results.failed.length
-        ? "Added " + results.added.length + " item(s). " + results.failed.length + " couldn't be added (sold out or no longer sold)."
-        : "Added all " + results.added.length + " item(s) to the cart.";
-      renderQuickOrder();
-      return refreshCart();
-    });
-  }
-
+  // ---- Save shopping list: saves the current cart as a named list.
   root.addEventListener("click", function (event) {
     if (event.target.closest("[data-sl-sl-save]")) {
       var saveMenuBtn = event.target.closest("[data-sl-sl-save]");
-      if (saveMenuBtn && (saveMenuBtn.disabled || !cartData.items || !cartData.items.length)) return;
+      if (saveMenuBtn.disabled || !cartData.items || !cartData.items.length) return;
       qo.menu = false;
       qo.saveListOpen = !qo.saveListOpen;
       qo.saveListMessage = "";
@@ -5133,38 +6752,27 @@
         if (result.ok) {
           qo.saveListOpen = false;
           qo.saveListName = "";
-          qo.listsOpen = true;
-          qo.listsMessage = "Saved \u201C" + name + "\u201D.";
-          return loadShoppingLists();
+          showNoticeToast("Shopping list saved");
+          loadShoppingLists();
         } else {
           qo.saveListMessage = (result.body && result.body.message) || "Couldn't save the list.";
-          renderQuickOrder();
         }
+        renderQuickOrder();
       });
-    } else if (event.target.closest("[data-sl-sl-open]:not([disabled])")) {
+    }
+  });
+
+  // A click anywhere else closes the Actions menu.
+  root.addEventListener("click", function (event) {
+    if (qo.menu && !event.target.closest("[data-sl-qo-actions]")) {
       qo.menu = false;
-      qo.listsOpen = !qo.listsOpen;
-      qo.listsMessage = "";
-      qo.saveListOpen = false;
       renderQuickOrder();
-      if (qo.listsOpen) loadShoppingLists();
-    } else if (event.target.closest("[data-sl-sl-add]")) {
-      addShoppingListToCart(event.target.closest("[data-sl-sl-add]").getAttribute("data-sl-sl-add"));
-    } else if (event.target.closest("[data-sl-sl-delete]")) {
-      if (!window.confirm("Delete this shopping list?")) return;
-      postJson(shoppingListsProxyUrl, { intent: "delete", id: event.target.closest("[data-sl-sl-delete]").getAttribute("data-sl-sl-delete") }).then(function (result) {
-        qo.listsMessage = result.ok ? "Deleted." : (result.body && result.body.message) || "Couldn't delete it.";
-        return loadShoppingLists();
-      });
     }
   });
 
   root.addEventListener("click", function (event) {
     if (event.target.closest("[data-sl-qo-menu]")) {
       qo.menu = !qo.menu;
-      if (qo.menu && shoppingListsProxyUrl && (!qo.lists || !qo.lists.length)) {
-        loadShoppingLists();
-      }
       renderQuickOrder();
     } else if (event.target.closest("[data-sl-qo-file]")) {
       qo.menu = false;
@@ -5199,9 +6807,26 @@
       qo.open = !qo.open;
       renderQuickOrder();
     } else if (event.target.closest("[data-sl-qo-flip]")) {
+      var flipTo = function () {
+        stopScanning();
+        renderQuickOrder();
+      };
       qo.facingMode = (qo.facingMode === "user") ? "environment" : "user";
-      stopScanning();
-      renderQuickOrder();
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        navigator.mediaDevices.enumerateDevices().then(function (devices) {
+          var cams = devices.filter(function (d) { return d.kind === "videoinput" && d.deviceId; });
+          if (cams.length > 1) {
+            var current = qoStream && qoStream.getVideoTracks()[0] && qoStream.getVideoTracks()[0].getSettings().deviceId;
+            var at = cams.findIndex(function (d) { return d.deviceId === (current || qo.deviceId); });
+            qo.deviceId = cams[(at + 1) % cams.length].deviceId;
+          } else {
+            qo.deviceId = "";
+            qo.scanMessage = "Only one camera found on this device";
+          }
+        }).catch(function () { qo.deviceId = ""; }).then(flipTo);
+      } else {
+        flipTo();
+      }
     } else if (event.target.closest("[data-sl-qo-close-scan]")) {
       qo.menu = false;
       qo.open = false;
@@ -5455,6 +7080,12 @@
     if (expandBtn) {
       isExpanded = !isExpanded;
       root.classList.toggle("is-expanded", isExpanded);
+      var themeDrawers = document.querySelectorAll("cart-drawer, cart-drawer-component, .drawer, #CartDrawer, .cart-drawer");
+      for (var i = 0; i < themeDrawers.length; i++) {
+        themeDrawers[i].classList.toggle("is-expanded", isExpanded);
+      }
+      var expandHost = getNativeHost();
+      if (expandHost && expandHost.inner) expandHost.inner.classList.toggle("is-expanded", isExpanded);
       expandBtn.innerHTML = (isExpanded ? ICON_MINIMIZE : ICON_EXPAND) +
         "<span>" + escapeHtml(isExpanded ? i18n.minimise : i18n.expand) + "</span>";
       return;
@@ -5474,6 +7105,9 @@
         showAccountTab();
       } else {
         setStep(0);
+      }
+      if (typeof syncDawnNativeDrawer === "function" && isNativeDawnActive()) {
+        syncDawnNativeDrawer();
       }
       return;
     }
@@ -5496,6 +7130,13 @@
     if (accountOrdersLink) {
       event.preventDefault();
       showOrdersList();
+      return;
+    }
+
+    var reportsLink = event.target.closest("[data-sl-open-reports]");
+    if (reportsLink) {
+      event.preventDefault();
+      showReportsView();
       return;
     }
 
@@ -5842,7 +7483,7 @@
     saveCartNote(event.target.value);
   });
 
-  document.addEventListener("click", function (event) {
+  root.addEventListener("click", function (event) {
     var searchResultsEl = bodyEl.querySelector(".sl-cart-search-results");
     var searchInput = bodyEl.querySelector(".sl-cart-search-input");
     if (searchResultsEl && !searchResultsEl.contains(event.target) && event.target !== searchInput) {
@@ -5850,7 +7491,69 @@
     }
   });
 
+  // The theme drawer closes on clicks it considers outside its panel. Our
+  // handlers re-render the UI (tabs, cart lines), which detaches the clicked
+  // element, so by the time the event reaches the theme its target no longer
+  // sits inside the panel and looks like an outside click. Registered after
+  // every other root click handler so it only sees the post-render DOM.
+  root.addEventListener("click", function (event) {
+    if (isNativeDawnActive() && !root.contains(event.target)) event.stopPropagation();
+  });
+
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape") closeDrawer();
   });
+
+  document.addEventListener(
+    "click",
+    function (event) {
+      var closeBtn = event.target.closest("[data-sl-close], .sl-cart-tabs-close");
+      if (closeBtn) {
+        console.log("🔴 [cart-drawer.js] Close button clicked in capture document listener:", closeBtn);
+        event.preventDefault();
+        event.stopPropagation();
+        closeDrawer();
+      }
+    },
+    true
+  );
+
+  if (isNativeDawnActive()) {
+    attachToDawnNow();
+    refreshCart().then(function () {
+      syncDawnNativeDrawer();
+      fetchPaymentTerms();
+    });
+  } else {
+    root.classList.remove("sl-native-mode");
+    if (root.parentElement && root.parentElement !== document.body) {
+      document.body.appendChild(root);
+    }
+    setStep(0);
+    refreshCart().then(function () {
+      fetchPaymentTerms();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      if (isNativeDawnActive()) {
+        attachToDawnNow();
+      } else {
+        root.classList.remove("sl-native-mode");
+        if (root.parentElement && root.parentElement !== document.body) {
+          document.body.appendChild(root);
+        }
+      }
+    });
+  } else {
+    if (isNativeDawnActive()) {
+      attachToDawnNow();
+    } else {
+      root.classList.remove("sl-native-mode");
+      if (root.parentElement && root.parentElement !== document.body) {
+        document.body.appendChild(root);
+      }
+    }
+  }
 })();

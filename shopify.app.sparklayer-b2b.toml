@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "6cb0e0de01b07da05ae26b06d60e3c8d"
-name = "SparkLayer B2B"
+name = "Appunik Wholesale"
 application_url = "https://example.com"
 embedded = true
 

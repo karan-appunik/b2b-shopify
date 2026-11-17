@@ -1,0 +1,1302 @@
+/* ==========================================================================
+   SparkLayer Native Theme Drawer Integration (Dawn, Horizon, etc.)
+   Renders the complete B2B Cart Drawer UI (Steps 1-4, Quick Add, Actions,
+   MSRP Strikethrough, Change Price, Order Exception, Quotes, Net 30, and
+   Agent Workspace) seamlessly inside the active theme's cart drawer.
+   ========================================================================== */
+
+/* 1. Hide Theme's native empty/cart elements so SparkLayer takes over */
+cart-drawer.drawer .drawer__header,
+cart-drawer .drawer__header,
+cart-drawer #CartDrawer .drawer__header,
+cart-drawer cart-drawer-items,
+cart-drawer .drawer__footer,
+cart-drawer .cart-drawer__warnings,
+cart-drawer .drawer__inner-empty,
+cart-drawer .cart-items,
+cart-drawer .cart__ctas {
+  display: none !important;
+}
+
+/* Themes name the form/footer/items differently (cart-drawer__footer,
+   cart-drawer__form, drawer__contents), so hide every other child of the
+   panel instead of listing classes. */
+cart-drawer .drawer__inner > :not(#sparklayer-cart-drawer-root) {
+  display: none !important;
+}
+
+/* 2. Drawer Visibility & Sliding Animation */
+/* Dawn only: Prestige's <cart-drawer> never gets .active (it is marked
+   data-sl-native-inner), so it must keep the theme's own open/close. */
+cart-drawer:not(.active):not([data-sl-native-inner]),
+cart-drawer.drawer:not(.active):not([data-sl-native-inner]) {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+cart-drawer:not(.active):not([data-sl-native-inner]) .drawer__inner,
+cart-drawer.drawer:not(.active):not([data-sl-native-inner]) .drawer__inner {
+  transform: translateX(100%) !important;
+  pointer-events: none !important;
+}
+
+cart-drawer.active:not([data-sl-native-inner]),
+cart-drawer.drawer.active:not([data-sl-native-inner]) {
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+cart-drawer.active .drawer__inner,
+cart-drawer.drawer.active .drawer__inner {
+  transform: translateX(0) !important;
+  pointer-events: auto !important;
+}
+
+/* 3. Style Dawn Drawer Inner to hold SparkLayer full height and 700px normal / 1000px expanded width */
+cart-drawer .drawer__inner,
+cart-drawer.drawer .drawer__inner,
+cart-drawer #CartDrawer .drawer__inner,
+.cart-drawer .drawer__inner {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  background: var(--sln-bg, #ffffff) !important;
+  width: 700px !important;
+  min-width: 700px !important;
+  max-width: 100vw !important;
+  flex: 0 0 700px !important;
+  box-sizing: border-box !important;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.4s cubic-bezier(0.22, 1, 0.36, 1), min-width 0.4s cubic-bezier(0.22, 1, 0.36, 1), flex 0.4s cubic-bezier(0.22, 1, 0.36, 1) !important;
+  will-change: width, min-width, flex-basis;
+}
+
+cart-drawer.is-expanded .drawer__inner,
+cart-drawer.drawer.is-expanded .drawer__inner,
+cart-drawer #CartDrawer.is-expanded .drawer__inner,
+.cart-drawer.is-expanded .drawer__inner {
+  /* Only the panel grows. The SparkLayer root inside it stays 100% of the panel, so the content
+     follows the panel's animation instead of jumping to the new width first. */
+  width: 1000px !important;
+  min-width: 1000px !important;
+  max-width: 100vw !important;
+  flex: 0 0 1000px !important;
+}
+
+@media (max-width: 768px) {
+  cart-drawer .drawer__inner,
+  cart-drawer.drawer .drawer__inner,
+  cart-drawer #CartDrawer .drawer__inner,
+  .cart-drawer .drawer__inner,
+  cart-drawer.is-expanded .drawer__inner,
+  cart-drawer.drawer.is-expanded .drawer__inner,
+  cart-drawer #CartDrawer.is-expanded .drawer__inner,
+  .cart-drawer.is-expanded .drawer__inner,
+  cart-drawer.is-expanded .drawer__inner {
+    width: 100vw !important;
+    min-width: 100vw !important;
+    max-width: 100vw !important;
+    flex: 0 0 100vw !important;
+  }
+}
+
+/* 4. SparkLayer Root inside Dawn Drawer */
+#sparklayer-cart-drawer-root.sl-native-mode {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  flex: 1 1 auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  position: relative !important;
+  background: var(--sln-bg, #ffffff) !important;
+  pointer-events: auto !important;
+  z-index: 10 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode * {
+  pointer-events: auto !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-overlay {
+  display: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-drawer {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  flex: 1 1 auto !important;
+  box-shadow: none !important;
+  transform: none !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  z-index: 10 !important;
+  pointer-events: auto !important;
+}
+
+/* The base stylesheet hides .sl-cart-drawer whenever the root lacks .is-open.
+   A natively mounted root is never .is-open, so keep the panel visible for
+   every theme; the theme's own drawer still controls open/close. */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-drawer {
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+/* 4. Top Tabs */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tabs {
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+  padding: 14px 20px 10px 20px !important;
+  border-bottom: 1px solid var(--sln-border, #e5e7eb) !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  background: var(--sln-bg, #ffffff) !important;
+  flex-shrink: 0 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tab {
+  font-size: 17px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  color: var(--sln-muted, #64748b) !important;
+  padding: 6px 0 !important;
+  border-bottom: 2px solid transparent !important;
+  transition: all 0.15s ease !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tab:hover {
+  color: var(--sln-text, #0f172a) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tab.is-active {
+  color: var(--sln-text, #0f172a) !important;
+  font-weight: 700 !important;
+  border-bottom-color: transparent !important;
+}
+
+/* User Profile Menu (Avatar positioned right next to close button) */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-usermenu,
+.sl-cart-usermenu {
+  position: relative !important;
+  margin-left: auto !important;
+  margin-right: 8px !important;
+  align-self: center !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-avatar,
+.sl-cart-avatar {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+  padding: 0 4px 0 0 !important;
+  border: none !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--sln-text, #0f172a) !important;
+  cursor: pointer !important;
+  font: inherit !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-avatar > span:first-child,
+.sl-cart-avatar > span:first-child {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  background: #0f172a !important;
+  color: #ffffff !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-avatar svg,
+.sl-cart-avatar svg {
+  color: var(--sln-muted, #64748b) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-usermenu-pop,
+.sl-cart-usermenu-pop {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 6px) !important;
+  z-index: 10000 !important;
+  min-width: 220px !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: 1px solid var(--sln-border, #e2e8f0) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+  overflow: hidden !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-usermenu-head,
+.sl-cart-usermenu-head {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 12px 14px !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-usermenu-logout,
+.sl-cart-usermenu-logout {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 12px 14px !important;
+  color: var(--sln-text, #0f172a) !important;
+  font-size: 14px !important;
+  text-decoration: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-usermenu-logout:hover {
+  background: #f8fafc !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tabs-close,
+.sl-cart-tabs-close {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-left: auto !important;
+  background: transparent !important;
+  border: none !important;
+  font-size: 26px !important;
+  font-weight: 300 !important;
+  line-height: 1 !important;
+  color: var(--sln-muted, #64748b) !important;
+  cursor: pointer !important;
+  padding: 4px 10px !important;
+  border-radius: 6px !important;
+  transition: all 0.15s ease !important;
+  pointer-events: auto !important;
+  position: relative !important;
+  z-index: 9999 !important;
+  user-select: none !important;
+}
+
+/* When profile menu is present, profile takes margin-left: auto and close follows right beside it */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-usermenu + .sl-cart-tabs-close,
+.sl-cart-usermenu + .sl-cart-tabs-close {
+  margin-left: 0 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tabs-close:hover,
+.sl-cart-tabs-close:hover {
+  color: var(--sln-text, #0f172a) !important;
+  background: #f1f5f9 !important;
+}
+
+/* 5. 4-Step Tracker Bar */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-steps {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  padding: 22px 20px 42px 20px !important;
+  border-bottom: 1px solid var(--sln-border, #e5e7eb) !important;
+  background: var(--sln-bg, #ffffff) !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  position: relative !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-steps[hidden],
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-steps:empty {
+  display: none !important;
+}
+
+/* The steps sit in 4 equal columns; the connector between two steps is drawn by the later
+   step's ::before, so it never depends on the separate (empty) line elements, which a theme
+   can collapse to nothing and leave the circles and names stacked on each other. */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-steps {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  justify-items: center !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  cursor: pointer !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step-line {
+  display: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step + .sl-cart-step::before,
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step-line + .sl-cart-step::before {
+  content: "" !important;
+  position: absolute !important;
+  top: 15px !important;
+  left: -50% !important;
+  width: 100% !important;
+  height: 2px !important;
+  background: #d1d5db !important;
+  z-index: 1 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step.is-active::before,
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step.is-done::before {
+  background: #000000 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step-dot {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  background: #d1d5db !important;
+  color: #4b5563 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  flex-shrink: 0 !important;
+  line-height: 1 !important;
+  border: none !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step.is-active .sl-cart-step-dot,
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step.is-done .sl-cart-step-dot {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step-label {
+  position: absolute !important;
+  top: 38px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  font-size: 11px !important;
+  color: var(--sln-muted, #6b7280) !important;
+  white-space: nowrap !important;
+  line-height: 1.2 !important;
+  text-align: center !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step.is-active .sl-cart-step-label,
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-step.is-done .sl-cart-step-label {
+  color: #000000 !important;
+  font-weight: 600 !important;
+}
+
+/* 6. Search Bar & SKU / Barcode Quick Add */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-search {
+  padding: 16px 20px !important;
+  border-bottom: 1px solid var(--sln-border, #e5e7eb) !important;
+  background: var(--sln-bg, #ffffff) !important;
+  position: relative !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-search-row {
+  display: flex !important;
+  gap: 8px !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-search-bar {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  border: 1px solid var(--sln-border, #d1d5db) !important;
+  border-radius: 6px !important;
+  flex: 1 !important;
+  min-width: 0 !important;
+  background: var(--sln-bg, #ffffff) !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-search-bar svg {
+  position: absolute !important;
+  left: 12px !important;
+  color: #94a3b8 !important;
+  pointer-events: none !important;
+  width: 16px !important;
+  height: 16px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-search-bar input {
+  width: 100% !important;
+  border: none !important;
+  outline: none !important;
+  padding: 10px 12px 10px 38px !important;
+  font-size: 15px !important;
+  color: #1e293b !important;
+  background: transparent !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-actions {
+  display: flex !important;
+  gap: 6px !important;
+  align-items: stretch !important;
+  position: relative !important;
+  flex-shrink: 0 !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-scan-btn {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: 1px solid var(--sln-border, #d1d5db) !important;
+  border-radius: 6px !important;
+  color: #475569 !important;
+  cursor: pointer !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-scan-btn:hover {
+  background: #f8fafc !important;
+  color: var(--sln-text, #0f172a) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-actions-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 14px !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: 1px solid var(--sln-border, #d1d5db) !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: var(--sln-text, #0f172a) !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-actions-btn:hover {
+  background: #f8fafc !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu {
+  position: absolute !important;
+  right: 0 !important;
+  top: calc(100% + 6px) !important;
+  z-index: 50 !important;
+  min-width: 180px !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: 1px solid var(--sln-border, #e2e8f0) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 6px !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu button {
+  background: none !important;
+  border: none !important;
+  text-align: left !important;
+  padding: 8px 12px !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  border-radius: 6px !important;
+  color: #334155 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu button:hover:not(:disabled) {
+  background: #f1f5f9 !important;
+  color: var(--sln-text, #0f172a) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu button:disabled {
+  color: #94a3b8 !important;
+  cursor: not-allowed !important;
+  opacity: 0.6 !important;
+}
+
+/* 7. Body & Scroll Area */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-body {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  min-height: 0 !important;
+}
+
+/* Step 2 & 3 Shipping / Payment styling */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping {
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  padding: 24px 20px 30px 20px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping .sl-cart-heading {
+  margin: 0 0 12px 0 !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  color: var(--sln-text, #0f172a) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping .sl-cart-heading-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  margin-top: 28px !important;
+  margin-bottom: 8px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping .sl-cart-order-notes {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  border: 1px solid var(--sln-border, #d1d5db) !important;
+  border-radius: 6px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  color: var(--sln-text, #111827) !important;
+  outline: none !important;
+  resize: vertical !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping .sl-cart-add-address {
+  font-size: 13px !important;
+  color: #2563eb !important;
+  text-decoration: none !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping .sl-cart-add-address:hover {
+  text-decoration: underline !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-shipping .sl-cart-address-empty {
+  font-size: 13px !important;
+  color: var(--sln-muted, #64748b) !important;
+  margin: 8px 0 16px 0 !important;
+}
+
+/* When viewing My Account tab */
+#sparklayer-cart-drawer-root.sl-native-mode.is-account-tab .sl-cart-steps,
+#sparklayer-cart-drawer-root.sl-native-mode.is-account-tab .sl-cart-footer {
+  display: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode.is-account-tab .sl-cart-body {
+  display: block !important;
+  padding: 16px 20px 30px !important;
+}
+
+/* 7. Footer */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-footer {
+  display: block !important;
+  flex-shrink: 0 !important;
+  padding: 16px 20px 20px 20px !important;
+  border-top: 1px solid var(--sln-border, #e5e7eb) !important;
+  background: var(--sln-bg, #ffffff) !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-footer:empty {
+  display: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-subtotal {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  color: var(--sln-text, #0f172a) !important;
+  margin-bottom: 4px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-subtotal-count {
+  font-weight: 400 !important;
+  color: var(--sln-muted, #64748b) !important;
+  font-size: 14px !important;
+  margin-left: 4px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-subtotal-amount {
+  font-weight: 700 !important;
+  color: var(--sln-text, #0f172a) !important;
+  font-size: 17px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tax-note {
+  margin: 4px 0 12px 0 !important;
+  font-size: 14px !important;
+  color: var(--sln-muted, #64748b) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon {
+  display: flex !important;
+  gap: 8px !important;
+  margin-bottom: 14px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon-input {
+  flex: 1 !important;
+  padding: 9px 12px !important;
+  border: 1px solid var(--sln-border, #d1d5db) !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  outline: none !important;
+  background: var(--sln-bg, #ffffff) !important;
+  color: var(--sln-text, #111827) !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon-input:focus {
+  border-color: var(--sln-text, #0f172a) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon-apply {
+  padding: 9px 16px !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: 1px solid var(--sln-border, #d1d5db) !important;
+  color: var(--sln-text, #0f172a) !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon-apply:hover {
+  background: #f8fafc !important;
+  border-color: var(--sln-text, #0f172a) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-b2b-terms-notice,
+.sl-b2b-terms-notice {
+  display: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-footer-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 10px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin-top: 12px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-footer-actions > * {
+  flex: 1 1 50% !important;
+  width: 50% !important;
+  box-sizing: border-box !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-agent-quote-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  padding: 12px 14px !important;
+  background: var(--sln-bg, #ffffff) !important;
+  border: 1.5px solid var(--sln-text, #0f172a) !important;
+  color: var(--sln-text, #0f172a) !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  min-height: 48px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-agent-quote-btn:hover {
+  background: #f8fafc !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-checkout {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 12px 14px !important;
+  background: var(--sln-btn-bg, #000000) !important;
+  border: 1.5px solid var(--sln-btn-bg, #000000) !important;
+  color: var(--sln-btn-text, #ffffff) !important;
+  border-radius: 6px !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  cursor: pointer !important;
+  text-decoration: none !important;
+  min-height: 48px !important;
+  transition: all 0.15s ease !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-checkout:hover {
+  background: #222222 !important;
+}
+
+/* 8. Agent Banner */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-agent-banner {
+  margin: 0 !important;
+  padding: 10px 16px !important;
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  font-size: 13px !important;
+  border-bottom: 1px solid #334155 !important;
+  box-sizing: border-box !important;
+  flex-shrink: 0 !important;
+}
+
+/* 9. Notification Toast */
+.sl-native-toast {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  padding: 12px 18px !important;
+  background: #111827 !important;
+  color: #ffffff !important;
+  border-radius: 6px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2) !important;
+  z-index: 9999999 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  animation: slFadeIn 0.2s ease-out !important;
+}
+
+@keyframes slFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ==========================================================================
+   Horizon theme (theme-drawer > dialog > cart-drawer-component)
+   The inner <dialog> is the sliding panel. JS marks it with
+   data-sl-native-inner="horizon" and appends the SparkLayer root; every other
+   child of the dialog (Horizon's header/items/summary, re-rendered on each
+   cart update) is hidden here so SparkLayer takes over the whole panel.
+   ========================================================================== */
+dialog[data-sl-native-inner="horizon"] > :not(#sparklayer-cart-drawer-root) {
+  display: none !important;
+}
+
+dialog[data-sl-native-inner="horizon"] {
+  width: 700px !important;
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  height: 100% !important;
+  max-height: 100dvh !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+dialog[data-sl-native-inner="horizon"][open] {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+dialog[data-sl-native-inner="horizon"].is-expanded {
+  width: 1000px !important;
+}
+
+@media (max-width: 768px) {
+  dialog[data-sl-native-inner="horizon"],
+  dialog[data-sl-native-inner="horizon"].is-expanded {
+    width: 100vw !important;
+  }
+}
+
+/* The base stylesheet hides .sl-cart-drawer whenever the root lacks .is-open
+   (the overlay-mode state). Inside the Horizon dialog the root is never
+   .is-open, so make the panel visible. */
+dialog[data-sl-native-inner="horizon"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-drawer {
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: none !important;
+}
+
+/* Keep the drawer above the theme's sticky header (which otherwise paints its
+   icons over the drawer's top-left corner). */
+dialog[data-sl-native-inner="horizon"],
+theme-drawer:has(> dialog[data-sl-native-inner="horizon"]) {
+  z-index: 2147483000 !important;
+}
+
+/* While the Horizon drawer is open, drop the theme header below it so the
+   header icons stop painting over the drawer's top-left corner. */
+body:has(dialog[data-sl-native-inner="horizon"][open]) :is(#header-group, header-component, .header-group, [id^="shopify-section-group-header"]) {
+  z-index: 0 !important;
+}
+
+/* Colours come from the theme: the dialog carries a Horizon colour-scheme
+   class, which defines these variables for everything inside it. */
+dialog[data-sl-native-inner="horizon"] #sparklayer-cart-drawer-root.sl-native-mode {
+  --sln-bg: var(--color-background, #ffffff);
+  --sln-text: var(--color-foreground, #0f172a);
+  --sln-muted: color-mix(in srgb, var(--color-foreground, #64748b) 65%, transparent);
+  --sln-border: var(--color-border, #e5e7eb);
+  --sln-btn-bg: var(--color-primary-button-background, #000000);
+  --sln-btn-text: var(--color-primary-button-text, #ffffff);
+  --sl-bg: var(--sln-bg);
+  --sl-text: var(--sln-text);
+  --sl-muted: var(--sln-muted);
+  --sl-border: var(--sln-border);
+  color: var(--sln-text);
+}
+
+/* ==========================================================================
+   Impulse theme (div#CartDrawer.drawer is the sliding panel)
+   JS marks it with data-sl-native-inner="impulse" and appends the SparkLayer
+   root; Impulse's own form/header/footer inside it are hidden here. Open and
+   close animation stay Impulse's own (.drawer--is-open), so no transform or
+   transition is overridden.
+   ========================================================================== */
+#CartDrawer[data-sl-native-inner="impulse"] > :not(#sparklayer-cart-drawer-root) {
+  display: none !important;
+}
+
+#CartDrawer[data-sl-native-inner="impulse"] {
+  width: 700px !important;
+  max-width: 100vw !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+#CartDrawer[data-sl-native-inner="impulse"].drawer--is-open {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+#CartDrawer[data-sl-native-inner="impulse"].is-expanded {
+  width: 1000px !important;
+}
+
+@media (max-width: 768px) {
+  #CartDrawer[data-sl-native-inner="impulse"],
+  #CartDrawer[data-sl-native-inner="impulse"].is-expanded {
+    width: 100vw !important;
+  }
+}
+
+#CartDrawer[data-sl-native-inner="impulse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-drawer {
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: none !important;
+}
+
+/* Colours from Impulse's drawer colour settings, falling back to its body colours. */
+#CartDrawer[data-sl-native-inner="impulse"] #sparklayer-cart-drawer-root.sl-native-mode {
+  --sln-bg: var(--colorDrawers, var(--colorBody, #ffffff));
+  --sln-text: var(--colorDrawerText, var(--colorTextBody, #0f172a));
+  --sln-muted: color-mix(in srgb, var(--colorDrawerText, var(--colorTextBody, #64748b)) 65%, transparent);
+  --sln-border: var(--colorDrawerBorder, var(--colorBorder, #e5e7eb));
+  --sln-btn-bg: var(--colorDrawerButton, var(--colorBtnPrimary, #000000));
+  --sln-btn-text: var(--colorDrawerButtonText, var(--colorBtnPrimaryText, #ffffff));
+  --sl-bg: var(--sln-bg);
+  --sl-text: var(--sln-text);
+  --sl-muted: var(--sln-muted);
+  --sl-border: var(--sln-border);
+  color: var(--sln-text);
+}
+
+/* ==========================================================================
+   Prestige theme (<cart-drawer> is a shadow-DOM dialog)
+   The panel, its slide animation and overlay live in the theme's shadow root
+   and stay untouched. JS appends the SparkLayer root as a light-DOM child, so
+   it lands in the default slot (::part(body)); every other child (theme items,
+   footer, header title) is hidden, and the empty header/footer parts are
+   collapsed so the body fills the panel.
+   ========================================================================== */
+cart-drawer[data-sl-native-inner="prestige"] > :not(#sparklayer-cart-drawer-root) {
+  display: none !important;
+}
+
+cart-drawer[data-sl-native-inner="prestige"] {
+  --drawer-max-width: min(100vw, 700px);
+}
+
+cart-drawer[data-sl-native-inner="prestige"].is-expanded {
+  --drawer-max-width: min(100vw, 1000px);
+}
+
+cart-drawer[data-sl-native-inner="prestige"]::part(header),
+cart-drawer[data-sl-native-inner="prestige"]::part(footer) {
+  display: none !important;
+}
+
+cart-drawer[data-sl-native-inner="prestige"]::part(content) {
+  grid-template-rows: minmax(0, 1fr) !important;
+  grid-auto-rows: minmax(0, 1fr) !important;
+}
+
+cart-drawer[data-sl-native-inner="prestige"]::part(body) {
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Colours come from the theme's colour scheme (RGB triplets on .color-scheme). */
+cart-drawer[data-sl-native-inner="prestige"] #sparklayer-cart-drawer-root.sl-native-mode {
+  --sln-bg: rgb(var(--background, 255 255 255));
+  --sln-text: rgb(var(--text-color, 15 23 42));
+  --sln-muted: color-mix(in srgb, rgb(var(--text-color, 100 116 139)) 65%, transparent);
+  --sln-border: rgb(var(--border-color, 229 231 235));
+  --sln-btn-bg: rgb(var(--button-background, 0 0 0));
+  --sln-btn-text: rgb(var(--button-text-color, 255 255 255));
+  --sl-bg: var(--sln-bg);
+  --sl-text: var(--sln-text);
+  --sl-muted: var(--sln-muted);
+  --sl-border: var(--sln-border);
+  color: var(--sln-text);
+}
+
+/* ==========================================================================
+   Panel-type <cart-drawer> without Dawn's #CartDrawer ids (Broadcast)
+   The theme opens/closes it with its own classes, so none of Dawn's .active
+   visibility rules apply (the element carries the marker). Only the panel's
+   other children are hidden and its width set; the panel keeps the theme's
+   own background, text colour, slide-in and overlay.
+   ========================================================================== */
+cart-drawer[data-sl-native-inner="inner"] .drawer__inner > :not(#sparklayer-cart-drawer-root) {
+  display: none !important;
+}
+
+cart-drawer[data-sl-native-inner="inner"] .drawer__inner {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 700px !important;
+  max-width: 100vw !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  /* a side drawer is always full height; without this it shrinks to its content
+     (a short strip) whenever the theme sizes it by what is inside */
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+}
+
+cart-drawer[data-sl-native-inner="inner"] .drawer__inner > #sparklayer-cart-drawer-root {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+
+cart-drawer[data-sl-native-inner="inner"].is-expanded .drawer__inner {
+  width: 1000px !important;
+}
+
+@media (max-width: 768px) {
+  cart-drawer[data-sl-native-inner="inner"] .drawer__inner,
+  cart-drawer[data-sl-native-inner="inner"].is-expanded .drawer__inner {
+    width: 100vw !important;
+  }
+}
+
+/* No guessed theme variables: let the panel's own background and text colour show through. */
+cart-drawer[data-sl-native-inner="inner"] #sparklayer-cart-drawer-root.sl-native-mode {
+  --sln-bg: transparent;
+  --sln-text: currentColor;
+  --sln-muted: color-mix(in srgb, currentColor 65%, transparent);
+  --sln-border: color-mix(in srgb, currentColor 18%, transparent);
+  --sl-bg: var(--sln-bg);
+  --sl-text: var(--sln-text);
+  --sl-muted: var(--sln-muted);
+  --sl-border: var(--sln-border);
+}
+
+/* ==========================================================================
+   Quantity stepper: themes style bare <input>/<button> globally (padding,
+   colour, background, height), which hid the number and recoloured "+".
+   Pin the stepper's own box and colours so it looks the same in every theme.
+   ========================================================================== */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-qty {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 32px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  border: 1px solid var(--sl-border, #e5e5e5) !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-qty button {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 28px !important;
+  min-width: 0 !important;
+  height: 30px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  color: var(--sl-text, #1a1a1a) !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+  text-transform: none !important;
+  cursor: pointer !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-qty button:disabled {
+  cursor: not-allowed !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-qty input {
+  width: 32px !important;
+  min-width: 0 !important;
+  height: 30px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--sl-text, #1a1a1a) !important;
+  -webkit-text-fill-color: currentColor !important;
+  opacity: 1 !important;
+  text-align: center !important;
+  font-size: 14px !important;
+  line-height: 1 !important;
+}
+
+/* ==========================================================================
+   Address / payment rows: the radio is an invisible overlay that receives the
+   click. Theme-wide input[type=radio] styles must not move, show or disable it.
+   ========================================================================== */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-address-row,
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-payment-option {
+  position: relative !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-address-radio-input,
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-payment-radio-input {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  z-index: 1 !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-cart-payment-option.is-disabled .sl-cart-payment-radio-input {
+  cursor: default !important;
+}
+
+/* ==========================================================================
+   Warehouse theme (<form id="mini-cart" class="mini-cart"> is a header dropdown)
+   JS marks it with data-sl-native-inner="warehouse" and appends the SparkLayer
+   root. The dropdown stays the theme's own: its position, open / close
+   (aria-hidden), shadow and background are untouched. Only its own items,
+   header and footer are hidden, and it gets a fixed height so the B2B UI can
+   scroll inside it.
+   ========================================================================== */
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] > :not(#sparklayer-cart-drawer-root) {
+  display: none !important;
+}
+
+/* Size and layout always; `display` only while open, so the theme's own hidden
+   state (aria-hidden="true") still hides it. */
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"][aria-hidden="false"] {
+  display: flex !important;
+}
+
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"][aria-hidden="true"] {
+  display: none !important;
+}
+
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] {
+  flex-direction: column !important;
+  width: 620px !important;
+  max-width: calc(100vw - 16px) !important;
+  /* Fills from where the dropdown starts to the bottom of the window (JS sets --sl-wh-avail). */
+  height: 80vh !important;
+  height: var(--sl-wh-avail, 80dvh) !important;
+  max-height: 900px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"].is-expanded {
+  width: 900px !important;
+  max-width: calc(100vw - 16px) !important;
+}
+
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] > #sparklayer-cart-drawer-root {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-drawer {
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: none !important;
+}
+
+/* Colours from Warehouse's own variables, with plain fallbacks. */
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode {
+  --sln-bg: var(--background, #ffffff);
+  --sln-text: var(--text-color, #0f172a);
+  --sln-muted: color-mix(in srgb, var(--text-color, #64748b) 65%, transparent);
+  --sln-border: var(--border-color, #e5e7eb);
+  --sln-btn-bg: var(--button-background, #000000);
+  --sln-btn-text: var(--button-text-color, #ffffff);
+  --sl-bg: var(--sln-bg);
+  --sl-text: var(--sln-text);
+  --sl-muted: var(--sln-muted);
+  --sl-border: var(--sln-border);
+  color: var(--sln-text);
+}
+
+/* Warehouse: the theme's dropdown is only 470px wide and 80vh tall, so the larger text used in
+   the side-panel drawers would squeeze the cart lines out of the room that is left. Keep the
+   compact text sizes here; the dropdown's own width and height stay as the theme has them. */
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tab { font-size: 14px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-titlebar h2 { font-size: 20px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-expand { font-size: 13px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-line-title { font-size: 14px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-line-meta { font-size: 12px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-line-price { font-size: 14px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-line-price .sl-per-unit,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-line-price .sl-msrp { font-size: 11px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-search-bar input,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-qo-actions-btn,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon-input,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-coupon-apply,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-checkout,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-qty input { font-size: 13px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-subtotal { font-size: 15px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-subtotal-count { font-size: 13px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-subtotal-amount { font-size: 16px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-tax-note,
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-footer-note { font-size: 12px !important; }
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode .sl-cart-qty button { font-size: 14px !important; }
+
+/* Shopping lists inside the Actions menu: the section label, divider and icon-less items. */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu button.sl-qo-menu-plain {
+  padding-left: 34px !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu .sl-qo-menu-name {
+  display: block !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-qo-menu {
+  max-width: min(320px, calc(100vw - 32px)) !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-sl-row-menu button {
+  font-size: 13px !important;
+  cursor: pointer !important;
+}
+
+/* Shopping Lists table: keep the theme's button/border styling off the row controls. */
+#sparklayer-cart-drawer-root.sl-native-mode .sl-sl-row-btn {
+  height: 30px !important;
+  padding: 0 10px !important;
+  background: #ffffff !important;
+  border: 1px solid #1f1f1f !important;
+  border-radius: 2px !important;
+  font-size: 13px !important;
+  color: #1f1f1f !important;
+  cursor: pointer !important;
+}
+
+#sparklayer-cart-drawer-root.sl-native-mode .sl-sl-trash {
+  width: auto !important;
+  height: auto !important;
+  padding: 2px !important;
+  border: 0 !important;
+  background: none !important;
+  color: #555555 !important;
+  cursor: pointer !important;
+}
+
+/* Warehouse panel is narrower; keep the fixed content width in sync with it. */
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode {
+  --sl-panel-w: 620px;
+}
+
+#mini-cart.mini-cart[data-sl-native-inner="warehouse"] #sparklayer-cart-drawer-root.sl-native-mode.is-expanded {
+  --sl-panel-w: 900px;
+}

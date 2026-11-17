@@ -1,4 +1,5 @@
 <div id="sparklayer-cart-drawer-root"
+     class=""
      data-sparklayer-cart-drawer
      data-proxy-url="/apps/sparklayer/variant-search"
      data-address-proxy-url="/apps/sparklayer/customer-address"
@@ -105,8 +106,6 @@
      data-i18n-recent-activity="{{ 'cartDrawer.recentActivity' | t }}"
      data-i18n-view-all="{{ 'cartDrawer.viewAll' | t }}"
      data-i18n-no-orders-yet="{{ 'cartDrawer.noOrdersYet' | t }}"
-     data-i18n-shopping-lists="{{ 'cartDrawer.shoppingLists' | t }}"
-     data-i18n-shopping-lists-empty="{{ 'cartDrawer.shoppingListsEmpty' | t }}"
      data-i18n-my-details="{{ 'cartDrawer.myDetails' | t }}"
      data-i18n-email="{{ 'cartDrawer.email' | t }}"
      data-i18n-credit-limit="{{ 'cartDrawer.creditLimit' | t }}"
@@ -140,13 +139,148 @@
   <script type="application/json" id="sparklayer-customer-default-address-id">{{ customer.default_address.id | json }}</script>
 {% endif %}
 
-<link rel="stylesheet" href="{{ 'cart-drawer.css' | asset_url }}">
+<script>
+  (function () {
+    function slCloseAnyDrawer(e) {
+      console.log('🔴 [SparkLayer Close] Triggered slCloseAnyDrawer', e);
+      if (e) {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      }
+
+      // 0. Impulse: close via the theme's own close button
+      var imp = document.getElementById('CartDrawer');
+      if (imp && imp.classList.contains('drawer') && imp.classList.contains('drawer--is-open')) {
+        var impBtn = imp.querySelector('.js-drawer-close, .drawer__close button, .drawer__close a');
+        if (impBtn) impBtn.click();
+        setTimeout(function () {
+          if (imp.classList.contains('drawer--is-open')) {
+            imp.classList.remove('drawer--is-open');
+            document.documentElement.classList.remove('js-drawer-open', 'lock-scroll');
+          }
+        }, 400);
+        document.dispatchEvent(new CustomEvent('sparklayer:drawer:closed'));
+        return;
+      }
+
+      // 0b. Warehouse: <form id="mini-cart"> is open while aria-hidden="false". Close it
+      // the way a shopper does, through the header's own cart toggle.
+      var wh = document.getElementById('mini-cart');
+      if (wh && wh.classList.contains('mini-cart') && wh.getAttribute('aria-hidden') !== 'true') {
+        var whToggles = document.querySelectorAll('[data-action="toggle-mini-cart"]');
+        for (var wt = 0; wt < whToggles.length; wt++) {
+          if (wh.contains(whToggles[wt]) || !whToggles[wt].getClientRects().length) continue;
+          whToggles[wt].click();
+          break;
+        }
+        // If the theme did not react to the click, shut it by hand.
+        setTimeout(function () {
+          if (wh.getAttribute('aria-hidden') !== 'true') {
+            wh.setAttribute('aria-hidden', 'true');
+            var expanded = document.querySelectorAll('[data-action="toggle-mini-cart"][aria-expanded="true"]');
+            for (var x = 0; x < expanded.length; x++) expanded[x].setAttribute('aria-expanded', 'false');
+          }
+        }, 400);
+        wh.classList.remove('is-expanded');
+        var whRoot = document.getElementById('sparklayer-cart-drawer-root');
+        if (whRoot) whRoot.classList.remove('is-open', 'is-expanded');
+        document.body.classList.remove('overflow-hidden', 'sl-drawer-active');
+        document.body.style.overflow = '';
+        document.dispatchEvent(new CustomEvent('sparklayer:drawer:closed'));
+        return;
+      }
+
+      // 1. Dawn custom element
+      var dawn = document.querySelector('cart-drawer');
+      console.log('🔴 [SparkLayer Close] Dawn element:', dawn);
+      if (dawn) {
+        if (typeof dawn.close === 'function') {
+          try {
+            dawn.close();
+            console.log('🔴 [SparkLayer Close] dawn.close() called successfully');
+          } catch (err) {
+            console.error('🔴 [SparkLayer Close] dawn.close() error:', err);
+          }
+        }
+        dawn.classList.remove('active', 'animate', 'is-open');
+        dawn.removeAttribute('open');
+        dawn.setAttribute('aria-hidden', 'true');
+      }
+
+      // 2. All theme drawer elements
+      var drawers = document.querySelectorAll(
+        'cart-drawer-component, theme-drawer, #CartDrawer, .cart-drawer, .drawer, #sidebar-cart, [data-cart-drawer], .drawer--cart, x-drawer[id*="cart"]'
+      );
+      console.log('🔴 [SparkLayer Close] Other drawers found:', drawers.length);
+      for (var i = 0; i < drawers.length; i++) {
+        var d = drawers[i];
+        if (typeof d.close === 'function') {
+          try { d.close(); } catch (err) {}
+        }
+        var dlg = d.querySelector && d.querySelector('dialog');
+        if (dlg && typeof dlg.close === 'function') {
+          try { dlg.close(); } catch (err) {}
+        }
+        d.classList.remove('active', 'animate', 'is-open');
+        d.removeAttribute('open');
+        d.setAttribute('aria-hidden', 'true');
+      }
+
+      // 3. Native overlay click
+      var overlay = document.getElementById('CartDrawer-Overlay') || document.querySelector('.cart-drawer__overlay');
+      if (overlay && typeof overlay.click === 'function') {
+        try {
+          console.log('🔴 [SparkLayer Close] Clicking overlay:', overlay);
+          overlay.click();
+        } catch (err) {}
+      }
+
+      // 4. SparkLayer Root
+      var root = document.getElementById('sparklayer-cart-drawer-root');
+      if (root) {
+        root.classList.remove('is-open', 'is-expanded');
+      }
+
+      // 5. Restore page body scrolling
+      document.body.classList.remove('overflow-hidden', 'sl-drawer-active');
+      document.body.style.overflow = '';
+      document.dispatchEvent(new CustomEvent('sparklayer:drawer:closed'));
+      console.log('🔴 [SparkLayer Close] Closed completely.');
+    }
+
+    window.__slCloseDrawer = slCloseAnyDrawer;
+
+    // Capture click on close buttons immediately
+    document.addEventListener(
+      'click',
+      function (e) {
+        var btn = e.target.closest && e.target.closest('[data-sl-close], .sl-cart-tabs-close');
+        if (btn) {
+          console.log('🔴 [SparkLayer Close] Click captured on close button element:', btn);
+          slCloseAnyDrawer(e);
+        }
+      },
+      true
+    );
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        console.log('🔴 [SparkLayer Close] Escape key detected');
+        slCloseAnyDrawer(e);
+      }
+    });
+  })();
+</script>
+
+<link rel="stylesheet" href="{{ 'cart-drawer.css' | asset_url }}?v={{ 'now' | date: '%s' }}">
+<link rel="stylesheet" href="{{ 'cart-drawer-native.css' | asset_url }}?v={{ 'now' | date: '%s' }}">
 <script src="{{ 'zxing.min.js' | asset_url }}" defer></script>
-<script src="{{ 'cart-drawer.js' | asset_url }}" defer></script>
+<script src="{{ 'cart-drawer.js' | asset_url }}?v={{ 'now' | date: '%s' }}" defer></script>
 
 {% schema %}
 {
-  "name": "SparkLayer Cart Drawer",
+  "name": "Appunik Cart Drawer",
   "target": "body",
   "settings": []
 }
