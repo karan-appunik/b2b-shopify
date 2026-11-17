@@ -1,0 +1,14 @@
+{
+  "fields": [
+    { "name": "order_id", "type": "single_line_text_field" },
+    { "name": "order_name", "type": "single_line_text_field" },
+    { "name": "customer_id", "type": "single_line_text_field" },
+    { "name": "customer_email", "type": "single_line_text_field" },
+    { "name": "customer_name", "type": "single_line_text_field" },
+    { "name": "company_name", "type": "single_line_text_field" },
+    { "name": "coupon_codes", "type": "single_line_text_field" },
+    { "name": "total_savings", "type": "number_decimal" },
+    { "name": "currency", "type": "single_line_text_field" },
+    { "name": "redeemed_at", "type": "date_time" }
+  ]
+}

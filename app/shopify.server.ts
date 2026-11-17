@@ -6,6 +6,11 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { syncProductsToBackend } from "./services/productSync.server";
+import { syncCustomersToBackend } from "./services/customerSync.server";
+import { syncOrdersToBackend } from "./services/orderSync.server";
+import { ensureStorefrontAccessToken } from "./services/storefrontToken.server";
+import { ensurePaymentOnAccountMetafieldDefinition } from "./services/customerCreditMetafield.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -16,6 +21,16 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+  hooks: {
+    afterAuth: async ({ session, admin }) => {
+      await shopify.registerWebhooks({ session });
+      await ensurePaymentOnAccountMetafieldDefinition(admin);
+      await syncProductsToBackend(admin, session.shop);
+      await syncCustomersToBackend(admin, session.shop);
+      await syncOrdersToBackend(admin, session.shop);
+      await ensureStorefrontAccessToken(admin);
+    },
+  },
   future: {
     expiringOfflineAccessTokens: true,
   },

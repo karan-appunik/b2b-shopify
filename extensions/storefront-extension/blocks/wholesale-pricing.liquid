@@ -1,0 +1,368 @@
+{% comment %}
+  Wholesale pricing widget (multi-merchant, portable app block).
+
+  Shows WSP (sparklayer.wholesale_price variant metafield) + MSRP (native
+  variant.price) for B2B customers as a per-variant table (one row per
+  variant, even for single-variant products) with a qty stepper per row and
+  one running-total "Add to Cart" button. Guests and non-B2B logged-in
+  customers see a sign-in prompt.
+
+  Known limitation: sparklayer.wholesale_price is a plain decimal metafield
+  and does not auto-convert under Shopify Markets multi-currency storefronts
+  the way native variant.price does — WSP/MSRP could show in mismatched
+  currencies for a non-home-market shopper. Revisit if a merchant needs this.
+{% endcomment %}
+
+{% assign sl_product = block.settings.product | default: product %}
+{% unless sl_product == blank %}
+  <div
+    id="sparklayer-wholesale-pricing-{{ section.id }}-{{ block.id }}"
+    class="sparklayer-wholesale-pricing"
+    data-money-format="{{ shop.money_format | strip_html }}"
+    data-currency="{{ localization.country.currency.iso_code | default: cart.currency.iso_code }}"
+    data-currency-symbol="{{ localization.country.currency.symbol | default: cart.currency.symbol | default: '$' }}"
+    data-i18n-add-to-cart="{{ 'wholesalePricing.addToCart' | t }}"
+    data-i18n-wsp-prefix="{{ 'wholesalePricing.wspPrefix' | t }}"
+    data-i18n-msrp="{{ 'wholesalePricing.msrp' | t }}"
+    data-summary-variant-id="{{ sl_product.selected_or_first_available_variant.id }}"
+    {{ block.shopify_attributes }}
+  >
+    <img class="sl-wsp-preview-float" data-sl-preview alt="" aria-hidden="true" width="120" height="120">
+    {% if customer.b2b? %}
+      {% comment %}
+        Per-variant quantity-break schedule, keyed by variant id — lets the
+        JS recompute the shown price as the buyer changes the qty stepper,
+        instead of only ever showing the "1+" price. Each value is already a
+        JSON array (written verbatim by priceListPush.server.ts), so it's
+        interpolated as-is rather than re-encoded with `| json`.
+      {% endcomment %}
+      <script type="application/json" data-sl-tiers>
+        {
+          {% for variant in sl_product.variants %}
+            "{{ variant.id }}": {{ variant.metafields.sparklayer.wholesale_price_tiers.value | default: "[]" }}{% unless forloop.last %},{% endunless %}
+          {% endfor %}
+        }
+      </script>
+      {% comment %}
+        Always render the table layout, even for single-variant products
+        (one row) — matches the reference design where a 1-variant product
+        still shows the Metal/Color/Price/Qty table, not a bare price line.
+      {% endcomment %}
+      {% liquid
+        assign active_curr = localization.country.currency.iso_code | default: cart.currency.iso_code | downcase
+        assign active_curr_symbol = localization.country.currency.symbol | default: cart.currency.symbol | default: '$'
+        if active_curr == 'eur'
+          assign active_curr_symbol = '€'
+        elsif active_curr == 'gbp'
+          assign active_curr_symbol = '£'
+        elsif active_curr == 'cad'
+          assign active_curr_symbol = 'CA$'
+        elsif active_curr == 'aud'
+          assign active_curr_symbol = 'AU$'
+        elsif active_curr == 'usd'
+          assign active_curr_symbol = '$'
+        endif
+
+        assign summary_variant = sl_product.selected_or_first_available_variant
+        assign curr_wsp_key = 'wholesale_price_' | append: active_curr
+        assign summary_wsp = summary_variant.metafields.sparklayer[curr_wsp_key].value | default: summary_variant.metafields.sparklayer.wholesale_price.value
+
+        assign summary_raw_msrp = summary_variant.metafields.sparklayer.msrp.value | default: summary_variant.metafields.custom.msrp.value | default: summary_variant.metafields.sparklayer.msrp | default: summary_variant.metafields.custom.msrp | default: summary_variant.metafields.sparklayer.rrp.value | default: summary_variant.metafields.custom.rrp.value | default: sl_product.metafields.sparklayer.msrp.value | default: sl_product.metafields.custom.msrp.value | default: sl_product.metafields.sparklayer.msrp | default: sl_product.metafields.custom.msrp
+        assign summary_matched_msrp = null
+
+        if summary_raw_msrp != blank
+          for item in summary_raw_msrp
+            assign item_curr = item.currency_code | downcase
+            if item_curr == active_curr
+              assign summary_matched_msrp = item.value
+              break
+            endif
+          endfor
+          if summary_matched_msrp == null
+            for item in summary_raw_msrp
+              assign item_curr = item.currency_code | downcase
+              if item_curr == 'usd'
+                assign summary_matched_msrp = item.value
+                break
+              endif
+            endfor
+          endif
+          if summary_matched_msrp == null
+            for item in summary_raw_msrp
+              if item.value
+                assign summary_matched_msrp = item.value
+                break
+              endif
+            endfor
+          endif
+          if summary_matched_msrp == null and summary_raw_msrp.value
+            assign summary_matched_msrp = summary_raw_msrp.value
+          elsif summary_matched_msrp == null and summary_raw_msrp > 0
+            assign summary_matched_msrp = summary_raw_msrp
+          endif
+          if summary_matched_msrp == null
+            assign summary_raw_str = summary_raw_msrp | json
+            if summary_raw_str contains 'value'
+              assign parts = summary_raw_str | split: '"value":'
+              if parts.size < 2
+                assign parts = summary_raw_str | split: 'value:'
+              endif
+              if parts.size > 1
+                assign parsed_num = parts[1] | split: ',' | first | split: '}' | first | split: ']' | first | strip | plus: 0
+                if parsed_num > 0
+                  assign summary_matched_msrp = parsed_num
+                endif
+              endif
+            endif
+          endif
+        endif
+
+        if summary_matched_msrp
+          assign summary_msrp_cents = summary_matched_msrp | times: 100 | round
+        else
+          assign summary_msrp_cents = null
+        endif
+      %}
+      {% comment %}
+        JS keeps this in sync with the matching table row (by
+        data-summary-variant-id above) once tiers are known — the markup
+        below is only what's shown before JS runs / with JS disabled, so it
+        deliberately mirrors the table's own "no wsp" fallback rather than
+        assuming the 1+ tier's price still applies.
+      {% endcomment %}
+      <div class="sl-wsp-summary" data-sl-summary data-summary-msrp-raw="{{ summary_raw_msrp | json | escape }}">
+        {% if summary_wsp %}
+          <span class="sl-wsp-price-wsp">{{ 'wholesalePricing.wspPrefix' | t }}{{ summary_wsp | times: 100 | money }}</span>
+          {% if summary_msrp_cents %}
+            {% assign summary_msrp_dollars = summary_msrp_cents | divided_by: 100 %}
+            {% assign summary_msrp_rem = summary_msrp_cents | modulo: 100 | prepend: '00' | slice: -2, 2 %}
+            <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ active_curr_symbol }}{{ summary_msrp_dollars }}.{{ summary_msrp_rem }}</span>
+          {% else %}
+            <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ summary_variant.price | money }}</span>
+          {% endif %}
+        {% else %}
+          <span class="sl-wsp-price-wsp">{{ summary_variant.price | money }}</span>
+          {% if summary_msrp_cents %}
+            {% assign summary_msrp_dollars = summary_msrp_cents | divided_by: 100 %}
+            {% assign summary_msrp_rem = summary_msrp_cents | modulo: 100 | prepend: '00' | slice: -2, 2 %}
+            <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ active_curr_symbol }}{{ summary_msrp_dollars }}.{{ summary_msrp_rem }}</span>
+          {% elsif summary_variant.compare_at_price > summary_variant.price %}
+            <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ summary_variant.compare_at_price | money }}</span>
+          {% else %}
+            <span class="sl-wsp-price-msrp" style="display:none;"></span>
+          {% endif %}
+        {% endif %}
+      </div>
+
+        <div class="sl-wsp-scroll">
+          <table class="sl-wsp-table">
+            <thead>
+              <tr>
+                {% for option in sl_product.options %}
+                  <th>{{ option }}</th>
+                {% endfor %}
+                <th>{{ 'wholesalePricing.price' | t }}</th>
+                <th>{{ 'wholesalePricing.quantity' | t }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for variant in sl_product.variants %}
+                {% liquid
+                  assign curr_wsp = variant.metafields.sparklayer[curr_wsp_key].value
+                  assign wsp = curr_wsp | default: variant.metafields.sparklayer.wholesale_price.value
+                  if wsp
+                    assign row_price_cents = wsp | times: 100 | round
+                  else
+                    assign row_price_cents = variant.price
+                  endif
+                  assign row_image = variant.featured_image | default: sl_product.featured_image
+
+                  assign raw_msrp = variant.metafields.sparklayer.msrp.value | default: variant.metafields.custom.msrp.value | default: variant.metafields.sparklayer.msrp | default: variant.metafields.custom.msrp | default: variant.metafields.sparklayer.rrp.value | default: variant.metafields.custom.rrp.value | default: sl_product.metafields.sparklayer.msrp.value | default: sl_product.metafields.custom.msrp.value | default: sl_product.metafields.sparklayer.msrp | default: sl_product.metafields.custom.msrp
+                  assign matched_msrp = null
+
+                  if raw_msrp != blank
+                    for item in raw_msrp
+                      assign item_curr = item.currency_code | downcase
+                      if item_curr == active_curr
+                        assign matched_msrp = item.value
+                        break
+                      endif
+                    endfor
+                    if matched_msrp == null
+                      for item in raw_msrp
+                        assign item_curr = item.currency_code | downcase
+                        if item_curr == 'usd'
+                          assign matched_msrp = item.value
+                          break
+                        endif
+                      endfor
+                    endif
+                    if matched_msrp == null
+                      for item in raw_msrp
+                        if item.value
+                          assign matched_msrp = item.value
+                          break
+                        endif
+                      endfor
+                    endif
+                    if matched_msrp == null and raw_msrp.value
+                      assign matched_msrp = raw_msrp.value
+                    elsif matched_msrp == null and raw_msrp > 0
+                      assign matched_msrp = raw_msrp
+                    endif
+                    if matched_msrp == null
+                      assign raw_str = raw_msrp | json
+                      if raw_str contains 'value'
+                        assign parts = raw_str | split: '"value":'
+                        if parts.size < 2
+                          assign parts = raw_str | split: 'value:'
+                        endif
+                        if parts.size > 1
+                          assign parsed_num = parts[1] | split: ',' | first | split: '}' | split: ']' | first | strip | plus: 0
+                          if parsed_num > 0
+                            assign matched_msrp = parsed_num
+                          endif
+                        endif
+                      endif
+                    endif
+                  endif
+
+                  if matched_msrp
+                    assign custom_msrp_cents = matched_msrp | times: 100 | round
+                  else
+                    assign custom_msrp_cents = null
+                  endif
+                %}
+                <tr
+                  class="sl-wsp-row{% if variant.available == false %} sl-wsp-row--sold-out{% endif %}"
+                  {% if row_image %}
+                    data-sl-preview-src="{{ row_image | image_url: width: 480 }}"
+                    tabindex="0"
+                  {% endif %}
+                >
+                  {% for option_value in variant.options %}
+                    <td data-label="{{ sl_product.options[forloop.index0] }}">
+                      {% if forloop.first %}
+                        <div class="sl-wsp-option-cell">
+                          {% if row_image %}
+                            <div class="sl-wsp-thumb-box">
+                              <img
+                                class="sl-wsp-row-image"
+                                src="{{ row_image | image_url: width: 96 }}"
+                                alt="{{ row_image.alt | default: variant.title | escape }}"
+                                loading="lazy"
+                                width="42"
+                                height="42"
+                              >
+                            </div>
+                          {% endif %}
+                          <span class="sl-wsp-option-cell-text">
+                            <span class="sl-wsp-option-title">{{ option_value }}</span>
+                            {% if variant.sku != blank %}
+                              <span class="sl-wsp-sku">{{ variant.sku }}</span>
+                            {% endif %}
+                          </span>
+                        </div>
+                      {% else %}
+                        {{ option_value }}
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                  <td class="sl-wsp-price">
+                    {% if wsp %}
+                      <span class="sl-wsp-price-wsp">{{ wsp | times: 100 | money }}</span>
+                      {% if custom_msrp_cents %}
+                        {% assign row_msrp_dollars = custom_msrp_cents | divided_by: 100 %}
+                        {% assign row_msrp_rem = custom_msrp_cents | modulo: 100 | prepend: '00' | slice: -2, 2 %}
+                        <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ active_curr_symbol }}{{ row_msrp_dollars }}.{{ row_msrp_rem }}</span>
+                      {% else %}
+                        <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ variant.price | money }}</span>
+                      {% endif %}
+                    {% else %}
+                      <span class="sl-wsp-price-wsp">{{ variant.price | money }}</span>
+                      {% if custom_msrp_cents %}
+                        {% assign row_msrp_dollars = custom_msrp_cents | divided_by: 100 %}
+                        {% assign row_msrp_rem = custom_msrp_cents | modulo: 100 | prepend: '00' | slice: -2, 2 %}
+                        <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ active_curr_symbol }}{{ row_msrp_dollars }}.{{ row_msrp_rem }}</span>
+                      {% elsif variant.compare_at_price > variant.price %}
+                        <span class="sl-wsp-price-msrp">{{ 'wholesalePricing.msrp' | t }}: {{ variant.compare_at_price | money }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </td>
+                  <td class="sl-wsp-qty">
+                    {% if variant.available %}
+                      <div class="sl-wsp-stepper">
+                        <button
+                          type="button"
+                          class="sl-wsp-stepper-btn"
+                          data-sl-step="-1"
+                          data-variant-id="{{ variant.id }}"
+                          aria-label="{{ 'wholesalePricing.decrease' | t }}"
+                        >&minus;</button>
+                        <input
+                          type="number"
+                          inputmode="numeric"
+                          min="0"
+                          value="0"
+                          class="sl-wsp-qty-input"
+                          data-sl-qty-input
+                          data-variant-id="{{ variant.id }}"
+                          data-variant-price="{{ row_price_cents }}"
+                          data-native-price="{{ variant.price }}"
+                          data-compare-at-price="{{ variant.compare_at_price | default: 0 }}"
+                          data-msrp-price="{{ custom_msrp_cents | default: '' }}"
+                          data-msrp-raw="{{ raw_msrp | json | escape }}"
+                          aria-label="{{ 'wholesalePricing.quantity' | t }}: {{ variant.title | escape }}"
+                        >
+                        <button
+                          type="button"
+                          class="sl-wsp-stepper-btn"
+                          data-sl-step="1"
+                          data-variant-id="{{ variant.id }}"
+                          aria-label="{{ 'wholesalePricing.increase' | t }}"
+                        >+</button>
+                      </div>
+                    {% else %}
+                      <span class="sl-wsp-sold-out">{{ 'wholesalePricing.soldOut' | t }}</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      <button type="button" class="sl-wsp-add-to-cart" data-sl-add-to-cart disabled>
+        <span data-sl-add-to-cart-label>{{ 'wholesalePricing.addToCart' | t }}</span>
+      </button>
+
+      <button type="button" class="sl-wsp-wishlist-btn" data-sl-wishlist>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+        </svg>
+        <span>Add to Wishlist</span>
+      </button>
+
+      <div class="visually-hidden" role="status" aria-live="polite" data-sl-live-region></div>
+    {% else %}
+      <p class="sl-wsp-signin-prompt">
+        {{ 'wholesalePricing.signInPromptPrefix' | t }}
+        <a href="{{ routes.account_login_url }}">{{ 'wholesalePricing.signInLinkText' | t }}</a>
+        {{ 'wholesalePricing.signInPromptSuffix' | t }}
+      </p>
+    {% endif %}
+  </div>
+
+  <link rel="stylesheet" href="{{ 'wholesale-pricing.css' | asset_url }}?v={{ 'now' | date: '%s' }}">
+  <script src="{{ 'wholesale-pricing.js' | asset_url }}?v={{ 'now' | date: '%s' }}" defer></script>
+{% endunless %}
+
+{% schema %}
+{
+  "name": "Wholesale Pricing",
+  "target": "section",
+  "settings": [
+    { "type": "product", "id": "product", "label": "Product", "autofill": true }
+  ]
+}
+{% endschema %}

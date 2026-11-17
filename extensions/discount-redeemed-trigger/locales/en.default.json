@@ -1,0 +1,4 @@
+{
+  "name": "SparkLayer: Discount Redeemed",
+  "description": "Fires when a B2B discount code or promotion is redeemed on an order."
+}

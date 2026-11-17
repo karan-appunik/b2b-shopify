@@ -1,0 +1,266 @@
+.sparklayer-wholesale-pricing {
+  position: relative;
+  z-index: 2;
+}
+
+/* wholesale-pricing.css pins .sparklayer-wholesale-pricing to 480px for the
+   product-page table; a card widget must instead fit the product card. The
+   extra class makes this win over those !important rules. */
+.sparklayer-wholesale-pricing.sl-wsp-card {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+
+.sl-wsp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sl-wsp-card-price {
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+
+.sl-wsp-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sl-wsp-option-label {
+  font-size: 0.8em;
+  color: var(--sl-wsp-muted, #6b6b6b);
+}
+
+.sl-wsp-option-select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--sl-wsp-border, #e5e5e5);
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.sl-wsp-card-buy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.sl-wsp-card .sl-wsp-stepper {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sl-wsp-card .sl-wsp-stepper-btn {
+  flex: 0 0 auto;
+  padding: 0 4px;
+}
+
+.sl-wsp-card .sl-wsp-qty-input {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+
+/* ==========================================================================
+   Collection-grid card look: price on one line, full-width square dropdowns
+   with a thin dark border and a chevron, no option labels, a bordered
+   quantity stepper and a solid black Add button, all 44px tall with 6px gaps.
+   Font and text colour are inherited from the theme.
+   ========================================================================== */
+.sparklayer-wholesale-pricing.sl-wsp-card {
+  --sl-wsp-card-line: var(--sl-wsp-text, #222);
+  --sl-wsp-card-border: #cccccc;
+  --sl-wsp-card-height: 44px;
+  /* themes with centred product info (Broadcast) must not centre the widget */
+  text-align: left;
+  gap: 6px;
+  font-size: 0.95em;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-card-price {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0 0 8px;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-price-wsp {
+  display: inline;
+  font-size: 1em;
+  font-weight: 600;
+  color: inherit;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-price-msrp {
+  display: inline;
+  margin: 0;
+  font-size: 1em;
+  font-weight: 400;
+  color: var(--sl-wsp-muted, #767676);
+}
+
+/* Option names stay for screen readers, hidden visually. */
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option {
+  gap: 0;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option-select {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: var(--sl-wsp-card-height);
+  margin: 0;
+  padding: 0 40px 0 14px;
+  border: 1px solid var(--sl-wsp-card-border);
+  border-radius: 0;
+  background-color: var(--sl-wsp-field-bg, #fff);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5l5-5' stroke='%23222' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 12px 8px;
+  color: color-mix(in srgb, var(--sl-wsp-card-line) 75%, transparent);
+  font: inherit;
+  font-size: 0.95em;
+  line-height: 1.2;
+  box-shadow: none;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-card-buy-row {
+  gap: 6px;
+  margin-top: 0;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-stepper {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: var(--sl-wsp-card-height);
+  border: 1px solid var(--sl-wsp-card-border);
+  border-radius: 0;
+  background: var(--sl-wsp-field-bg, #fff);
+  overflow: hidden;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-stepper-btn {
+  flex: 0 0 42px;
+  width: 42px;
+  min-width: 42px;
+  height: 100%;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: #8c8c8c;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-stepper-btn:hover {
+  background: transparent;
+  color: var(--sl-wsp-card-line);
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-qty-input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: 100%;
+  border-inline: 1px solid var(--sl-wsp-card-border);
+  font-size: 0.95em;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--sl-wsp-card-line) 80%, transparent);
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-add-to-cart {
+  width: 100%;
+  height: var(--sl-wsp-card-height);
+  padding: 0 14px;
+  border-radius: 0;
+  background: var(--sl-wsp-btn-bg, #000);
+  color: var(--sl-wsp-btn-text, #fff);
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-add-to-cart:hover:not(:disabled) {
+  background: var(--sl-wsp-btn-bg, #000);
+  opacity: 0.88;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-add-to-cart:disabled {
+  background: #d8d8d8;
+  color: #767676;
+}
+
+/* ==========================================================================
+   Wrapping dropdown text: a closed <select> cannot wrap, so the visible field
+   is .sl-wsp-option-display (grows to as many lines as the name needs) and the
+   real select is stretched over it, fully transparent, to take the click.
+   ========================================================================== */
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option-field {
+  position: relative;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option-display {
+  display: flex;
+  align-items: center;
+  min-height: var(--sl-wsp-card-height);
+  padding: 8px 40px 8px 14px;
+  border: 1px solid var(--sl-wsp-card-border);
+  background-color: var(--sl-wsp-field-bg, #fff);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5l5-5' stroke='%23222' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 12px 8px;
+  color: color-mix(in srgb, var(--sl-wsp-card-line) 75%, transparent);
+  font-size: 0.95em;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option-field .sl-wsp-option-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  z-index: 1;
+}
+
+.sparklayer-wholesale-pricing.sl-wsp-card .sl-wsp-option-field:focus-within .sl-wsp-option-display {
+  outline: 2px solid color-mix(in srgb, var(--sl-wsp-card-line) 55%, transparent);
+  outline-offset: 1px;
+}

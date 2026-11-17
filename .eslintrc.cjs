@@ -19,7 +19,7 @@ module.exports = {
     commonjs: true,
     es6: true,
   },
-  ignorePatterns: ["!**/.server", "!**/.client"],
+  ignorePatterns: ["!**/.server", "!**/.client", "check_catalog_locations.js", "debug_sync.js", "**/*.min.js", "extensions/**/assets/*.min.js"],
 
   // Base config
   extends: ["eslint:recommended"],
@@ -74,6 +74,9 @@ module.exports = {
         "plugin:import/recommended",
         "plugin:import/typescript",
       ],
+      rules: {
+        "@typescript-eslint/no-explicit-any": "warn",
+      },
     },
 
     // Node
@@ -91,6 +94,7 @@ module.exports = {
     },
   ],
   globals: {
-    shopify: "readonly"
+    shopify: "readonly",
+    Shopify: "readonly"
   },
 };

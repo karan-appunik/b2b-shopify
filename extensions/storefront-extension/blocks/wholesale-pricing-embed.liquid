@@ -1,0 +1,46 @@
+{% comment %}
+  Sitewide wholesale-pricing embed — an App Embed (target: "body"), toggled
+  ONCE in the theme editor's "App embeds" panel. Unlike wholesale-pricing.liquid
+  (target: "section", requiring manual per-section placement), this needs zero
+  placement: once enabled, it injects
+  WSP price + variant dropdowns + qty + Add-to-cart into every product-card on
+  every page (the product detail page's own buy-box is the separate
+  wholesale-pricing.liquid block, not a product-card, so it is never duplicated).
+
+  Product/variant/WSP data can't come from Liquid `autofill` here (the embed
+  doesn't know in advance which products render on a given page), so the
+  script fetches it client-side per product handle via the Storefront API,
+  using the public access token provisioned by
+  admin-frontend/app/services/storefrontToken.server.ts and stored on the
+  `sparklayer.storefront_token` shop metafield.
+
+  Gated to B2B customers only (data-is-b2b), same as the other two blocks.
+{% endcomment %}
+
+{% comment %}
+  Also runs on the product page: the main product is not a product-card (it has
+  the wholesale-pricing.liquid block), so only the "You may also like" /
+  recommendation cards are picked up there.
+{% endcomment %}
+<div
+    id="sparklayer-wholesale-pricing-embed"
+    data-is-b2b="{{ customer.b2b? }}"
+    data-storefront-token="{{ shop.metafields.sparklayer.storefront_token.value }}"
+    data-shop-domain="{{ shop.permanent_domain }}"
+    data-money-format="{{ shop.money_format | strip_html }}"
+    data-i18n-add-to-cart="{{ 'wholesalePricing.addToCart' | t }}"
+    data-i18n-add-with-price="{{ 'wholesalePricing.addWithPrice' | t }}"
+    data-i18n-sold-out="{{ 'wholesalePricing.soldOut' | t }}"
+    hidden
+  ></div>
+
+  <link rel="stylesheet" href="{{ 'wholesale-pricing.css' | asset_url }}">
+  <link rel="stylesheet" href="{{ 'wholesale-pricing-card.css' | asset_url }}">
+  <script src="{{ 'wholesale-pricing-embed.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Wholesale Pricing (All)",
+  "target": "body"
+}
+{% endschema %}

@@ -1,0 +1,520 @@
+/* Keep the product info column level with the media-gallery (sticky, z-index: 2; the
+   info column comes later in the DOM so it paints above it) so the floating hover
+   preview is not tucked behind the product image. Must stay below the theme's sticky
+   header (z-index: 3 in Dawn-family themes), otherwise the whole column paints over it. */
+.product__info-wrapper,
+.product__info-container,
+.product-single__meta,
+.product__details,
+.grid__item.product__info-wrapper {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+.sparklayer-wholesale-pricing {
+  --sl-wsp-border: color-mix(in srgb, var(--sl-wsp-text) 20%, transparent);
+  --sl-wsp-line: color-mix(in srgb, var(--sl-wsp-text) 12%, transparent);
+  --sl-wsp-head-bg: color-mix(in srgb, var(--sl-wsp-text) 6%, var(--sl-wsp-field-bg, #fff));
+  --sl-wsp-hover-bg: color-mix(in srgb, var(--sl-wsp-text) 4%, transparent);
+  --sl-wsp-text: #222222;
+  --sl-wsp-muted: color-mix(in srgb, var(--sl-wsp-text) 60%, transparent);
+  font-family: inherit;
+  color: var(--sl-wsp-text);
+  box-sizing: border-box;
+  position: relative !important;
+  /* Low on purpose: a higher value paints the widget over the theme's sticky header. */
+  z-index: 1 !important;
+  /* 426px on the product page. max-width keeps it inside a narrower theme
+     column (no sideways page scroll); the compact @container rules below make
+     the whole table (Metal / Color / Price / Quantity) fit at this width. */
+  min-width: 0 !important;
+  width: 426px !important;
+  max-width: 100% !important;
+}
+
+@media screen and (max-width: 520px) {
+  .sparklayer-wholesale-pricing {
+    min-width: 100% !important;
+    width: 100% !important;
+  }
+}
+
+/* Warehouse: fill the product info box (its full content width), not 426px. */
+.sparklayer-wholesale-pricing[data-sl-theme="warehouse"] {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.sparklayer-wholesale-pricing *,
+.sparklayer-wholesale-pricing *::before,
+.sparklayer-wholesale-pricing *::after {
+  box-sizing: border-box;
+}
+
+.sl-wsp-signin-prompt {
+  margin: 0;
+  font-size: 0.95em;
+  color: var(--sl-wsp-muted);
+}
+
+.sl-wsp-signin-prompt a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.sl-wsp-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.sl-wsp-summary .sl-wsp-price-wsp {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--sl-wsp-text);
+  letter-spacing: -0.2px;
+}
+
+.sl-wsp-summary .sl-wsp-price-msrp {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--sl-wsp-muted);
+}
+
+.sl-wsp-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--sl-wsp-border);
+  border-radius: 2px;
+  margin-bottom: 16px;
+  background: var(--sl-wsp-field-bg, #fff);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sl-wsp-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.sl-wsp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: auto;
+}
+
+/* Themes style bare <table>/<th>/<td> (own outer border, margin, column rules),
+   which drew a second frame inside the .sl-wsp-scroll border. The one frame is
+   the .sl-wsp-scroll border; only the row rules below are kept. */
+.sparklayer-wholesale-pricing .sl-wsp-scroll {
+  padding: 0 !important;
+}
+
+.sparklayer-wholesale-pricing .sl-wsp-table {
+  border: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.sparklayer-wholesale-pricing .sl-wsp-table th,
+.sparklayer-wholesale-pricing .sl-wsp-table td {
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+
+.sl-wsp-table th:last-child,
+.sl-wsp-table td:last-child {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.sl-wsp-table th {
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--sl-wsp-head-bg);
+  color: var(--sl-wsp-text);
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--sl-wsp-border);
+}
+
+.sl-wsp-table td {
+  padding: 12px 14px;
+  border-top: 1px solid var(--sl-wsp-line);
+  vertical-align: middle;
+  color: var(--sl-wsp-text);
+}
+
+.sl-wsp-table tr:first-child td {
+  border-top: none;
+}
+
+.sl-wsp-row--sold-out {
+  opacity: 0.5;
+}
+
+.sl-wsp-row {
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.sl-wsp-row:hover,
+.sl-wsp-row:focus-visible {
+  background: var(--sl-wsp-hover-bg);
+  outline: none;
+}
+
+.sl-wsp-option-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sl-wsp-thumb-box {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  border: 1px solid var(--sl-wsp-line);
+  border-radius: 2px;
+  background: var(--sl-wsp-field-bg, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.sl-wsp-row-image {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* Floating preview: JS moves it to <body> and positions it (fixed, viewport
+   coordinates) on the left of the hovered row, so no theme layer can cover it. */
+.sl-wsp-preview-float {
+  position: fixed !important;
+  right: auto !important;
+  width: 120px !important;
+  height: 120px !important;
+  object-fit: contain;
+  padding: 8px;
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e0e0e0;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.96) translateX(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, top 0.12s ease;
+  pointer-events: none;
+  z-index: 1000 !important;
+  box-sizing: border-box;
+}
+
+.sl-wsp-preview-float.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1) translateX(0);
+}
+
+@media screen and (max-width: 768px) {
+  .sl-wsp-preview-float {
+    display: none !important;
+  }
+}
+
+.sl-wsp-option-cell-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sl-wsp-option-title {
+  font-size: 13px;
+  color: var(--sl-wsp-text);
+  line-height: 1.35;
+}
+
+.sl-wsp-sku {
+  font-size: 11px;
+  color: var(--sl-wsp-muted);
+  letter-spacing: 0.2px;
+  margin-top: 1px;
+}
+
+.sl-wsp-price {
+  white-space: nowrap;
+}
+
+.sl-wsp-price-wsp {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--sl-wsp-text);
+}
+
+.sl-wsp-price-msrp {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--sl-wsp-muted);
+}
+
+.sparklayer-wholesale-pricing .sl-wsp-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--sl-wsp-border);
+  border-radius: 2px;
+  width: fit-content;
+  overflow: hidden;
+  box-sizing: border-box;
+  background: var(--sl-wsp-field-bg, #fff);
+  height: 34px;
+}
+
+.sparklayer-wholesale-pricing .sl-wsp-stepper-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  margin: 0;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 32px;
+  color: color-mix(in srgb, var(--sl-wsp-text) 70%, transparent);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+
+.sparklayer-wholesale-pricing .sl-wsp-stepper-btn:hover {
+  background: var(--sl-wsp-hover-bg);
+  color: var(--sl-wsp-text);
+}
+
+.sparklayer-wholesale-pricing .sl-wsp-qty-input {
+  -webkit-appearance: none;
+  appearance: none;
+  -moz-appearance: textfield;
+  width: 38px;
+  min-width: 38px;
+  text-align: center;
+  border: none;
+  border-radius: 0;
+  border-inline: 1px solid var(--sl-wsp-border);
+  outline: none;
+  box-shadow: none;
+  margin: 0;
+  padding: 0;
+  height: 32px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sl-wsp-text);
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.sl-wsp-qty-input::-webkit-inner-spin-button,
+.sl-wsp-qty-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sl-wsp-sold-out {
+  font-size: 0.85em;
+  color: var(--sl-wsp-muted);
+}
+
+.sl-wsp-add-to-cart {
+  display: block;
+  width: 100%;
+  text-align: center;
+  background: var(--sl-wsp-btn-bg, #1a1a1a);
+  color: var(--sl-wsp-btn-text, #fff);
+  border: none;
+  border-radius: 2px;
+  padding: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background-color 0.15s ease;
+}
+
+.sl-wsp-add-to-cart:hover:not(:disabled) {
+  background: var(--sl-wsp-btn-bg, #333);
+  opacity: 0.88;
+}
+
+.sl-wsp-add-to-cart:disabled {
+  background: #d8d8d8;
+  color: #767676;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.sl-wsp-wishlist-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  margin-top: 10px;
+  background: var(--sl-wsp-field-bg, #fff);
+  color: var(--sl-wsp-text);
+  border: 1px solid var(--sl-wsp-text);
+  border-radius: 2px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background-color 0.15s ease;
+}
+
+.sl-wsp-wishlist-btn:hover {
+  background: var(--sl-wsp-hover-bg);
+}
+
+.sl-wsp-wishlist-btn.is-active {
+  background: var(--sl-wsp-text);
+  color: var(--sl-wsp-field-bg, #fff);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ==========================================================================
+   Narrow info columns (Prestige and others): keep the same 4-column table but
+   compact it so Metal / Color / Price / Quantity all fit without scrolling:
+   tighter cell padding, a smaller thumbnail and stepper, and the theme's wide
+   uppercase letter-spacing on <th> removed. Uses a container query on the
+   widget, so wide columns keep the regular spacing.
+   ========================================================================== */
+.sparklayer-wholesale-pricing .sl-wsp-scroll {
+  container-type: inline-size;
+}
+
+@container (max-width: 500px) {
+  .sparklayer-wholesale-pricing .sl-wsp-table th {
+    padding: 8px 8px !important;
+    font-size: 11px !important;
+    letter-spacing: 0.03em !important;
+    white-space: normal !important;
+  }
+
+  .sparklayer-wholesale-pricing .sl-wsp-table td {
+    padding: 8px !important;
+    font-size: 12px;
+  }
+
+  .sl-wsp-option-cell {
+    gap: 6px;
+  }
+
+  .sl-wsp-thumb-box,
+  .sl-wsp-row-image {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+  }
+
+  .sl-wsp-option-title {
+    font-size: 12px;
+  }
+
+  .sl-wsp-price-wsp {
+    font-size: 12px;
+  }
+
+  .sl-wsp-price-msrp {
+    font-size: 10px;
+  }
+
+  .sparklayer-wholesale-pricing .sl-wsp-stepper {
+    height: 28px;
+  }
+
+  .sparklayer-wholesale-pricing .sl-wsp-stepper-btn {
+    width: 24px;
+    min-width: 24px;
+    height: 26px;
+    line-height: 26px;
+    font-size: 14px;
+  }
+
+  .sparklayer-wholesale-pricing .sl-wsp-qty-input {
+    width: 28px;
+    min-width: 28px;
+    height: 26px;
+    font-size: 12px;
+  }
+
+  /* The MSRP line ("MSRP: $2000.00") is the widest thing in the Price cell; let it
+     wrap so the Quantity stepper never gets pushed out of the frame. */
+  .sparklayer-wholesale-pricing .sl-wsp-table td.sl-wsp-price {
+    white-space: normal;
+  }
+
+  .sl-wsp-price-wsp {
+    white-space: nowrap;
+  }
+
+  .sl-wsp-price-msrp {
+    white-space: normal;
+  }
+}
+
+/* Very narrow columns (about 380px and under): drop the thumbnail so the four
+   columns still fit without cutting the stepper. */
+@container (max-width: 400px) {
+  .sparklayer-wholesale-pricing .sl-wsp-thumb-box {
+    display: none;
+  }
+
+  .sparklayer-wholesale-pricing .sl-wsp-table th,
+  .sparklayer-wholesale-pricing .sl-wsp-table td {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+}
+
+/* Enabled Add button keeps its colours even when a theme restyles <button>
+   (focus / active / hover) after the quantity changes. */
+.sparklayer-wholesale-pricing .sl-wsp-add-to-cart:not(:disabled),
+.sparklayer-wholesale-pricing .sl-wsp-add-to-cart:not(:disabled):hover,
+.sparklayer-wholesale-pricing .sl-wsp-add-to-cart:not(:disabled):focus,
+.sparklayer-wholesale-pricing .sl-wsp-add-to-cart:not(:disabled):active {
+  background: var(--sl-wsp-btn-bg, #1a1a1a) !important;
+  color: var(--sl-wsp-btn-text, #fff) !important;
+}

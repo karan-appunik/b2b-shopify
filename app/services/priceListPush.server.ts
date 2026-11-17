@@ -1,0 +1,286 @@
+import prisma from "../db.server";
+import { unauthenticated } from "../shopify.server";
+import {
+  WHOLESALE_PRICE_NAMESPACE,
+  LEGACY_PRICE_KEY,
+  LEGACY_TIERS_KEY,
+  SHOP_CURRENCY_QUERY,
+  currencyKeys,
+  sameCurrency,
+} from "./wholesaleMetafields.server";
+
+const METAFIELDS_SET = `#graphql
+  mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id }
+      userErrors { field message code }
+    }
+  }
+`;
+
+const METAFIELDS_DELETE = `#graphql
+  mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields { key }
+      userErrors { field message }
+    }
+  }
+`;
+
+const TAGS_ADD = `#graphql
+  mutation TagsAdd($id: ID!, $tags: [String!]!) {
+    tagsAdd(id: $id, tags: $tags) {
+      userErrors { field message }
+    }
+  }
+`;
+
+const TAGS_REMOVE = `#graphql
+  mutation TagsRemove($id: ID!, $tags: [String!]!) {
+    tagsRemove(id: $id, tags: $tags) {
+      userErrors { field message }
+    }
+  }
+`;
+
+export interface PushPriceListInput {
+  shop?: string;
+  priceListName: string;
+  currency: string;
+  tag: string;
+  prices: Array<{
+    variantId: string;
+    amount: string;
+    tiers: Array<{ minQuantity: number; price: number }>;
+  }>;
+  previousVariantIds?: string[];
+  addCustomerIds: string[];
+  removeCustomerIds: string[];
+}
+
+export interface PushPriceListResult {
+  success?: boolean;
+  updatedCount?: number;
+  failedTagCustomerIds?: string[];
+  error?: string;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function getAdminForShop(shop?: string) {
+  let session = null;
+  if (shop) {
+    session = await prisma.session.findFirst({
+      where: { shop },
+      orderBy: { expires: "desc" },
+    });
+  }
+  if (!session) {
+    session = await prisma.session.findFirst({ orderBy: { expires: "desc" } });
+  }
+  if (!session) {
+    throw new Error("No Shopify session found — open the admin app at least once first");
+  }
+  const { admin } = await unauthenticated.admin(session.shop);
+  return admin;
+}
+
+async function getShopCurrency(
+  admin: Awaited<ReturnType<typeof getAdminForShop>>,
+): Promise<string | null> {
+  try {
+    const res = await admin.graphql(SHOP_CURRENCY_QUERY);
+    const body = await res.json();
+    return body.data?.shop?.currencyCode ?? null;
+  } catch (err) {
+    console.error("[priceListPush] failed to read shop currency", err);
+    return null;
+  }
+}
+
+async function syncMetafields(
+  admin: Awaited<ReturnType<typeof getAdminForShop>>,
+  input: PushPriceListInput,
+): Promise<{ updatedCount: number; error?: string }> {
+  const currentVariantIds = new Set(input.prices.map((p) => p.variantId));
+  const removedVariantIds = (input.previousVariantIds || []).filter(
+    (id) => !currentVariantIds.has(id),
+  );
+
+  // Every list writes its own currency-specific keys, so a USD and a EUR list
+  // covering the same variant no longer overwrite each other. The original
+  // un-suffixed keys are only kept up to date for the shop's own currency
+  // (that is the only currency readers fall back to them for).
+  const { priceKey, tiersKey } = currencyKeys(input.currency);
+  const shopCurrency = await getShopCurrency(admin);
+  const writeLegacy = sameCurrency(input.currency, shopCurrency);
+  const keysPerVariant = writeLegacy ? 4 : 2;
+
+  if (removedVariantIds.length > 0) {
+    for (const batch of chunk(removedVariantIds, 25)) {
+      const deleteRes = await admin.graphql(METAFIELDS_DELETE, {
+        variables: {
+          metafields: batch.flatMap((id) => {
+            const ownerId = id.startsWith("gid://shopify/ProductVariant/") ? id : `gid://shopify/ProductVariant/${id}`;
+            const identifiers = [
+              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: priceKey },
+              { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: tiersKey },
+            ];
+            if (writeLegacy) {
+              identifiers.push(
+                { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: LEGACY_PRICE_KEY },
+                { ownerId, namespace: WHOLESALE_PRICE_NAMESPACE, key: LEGACY_TIERS_KEY },
+              );
+            }
+            return identifiers;
+          }),
+        },
+      });
+      const deleteBody = await deleteRes.json();
+      const deleteErrors = deleteBody.data?.metafieldsDelete?.userErrors;
+      if (deleteErrors?.length) {
+        console.error("[priceListPush] failed to delete removed metafields", deleteErrors);
+      }
+    }
+  }
+
+  let updatedCount = 0;
+  // Keep each call under the ~25-metafield-per-request budget the delete loop
+  // above uses: 12 prices -> 24 writes, or 6 prices -> 24 writes when the
+  // un-suffixed keys are written as well.
+  const batchSize = Math.floor(24 / keysPerVariant);
+  for (const batch of chunk(input.prices, batchSize)) {
+    const setRes = await admin.graphql(METAFIELDS_SET, {
+      variables: {
+        metafields: batch.flatMap((p) => {
+          const ownerId = p.variantId.startsWith("gid://shopify/ProductVariant/")
+            ? p.variantId
+            : `gid://shopify/ProductVariant/${p.variantId}`;
+          // Plain text (not Shopify's "json" metafield type) so Liquid's
+          // `metafield.value` is always guaranteed to be the raw string —
+          // `| parse_json` in Liquid then decodes the tier list.
+          const tiersValue = JSON.stringify(p.tiers);
+          const writes = [
+            {
+              ownerId,
+              namespace: WHOLESALE_PRICE_NAMESPACE,
+              key: priceKey,
+              type: "number_decimal",
+              value: p.amount,
+            },
+            {
+              ownerId,
+              namespace: WHOLESALE_PRICE_NAMESPACE,
+              key: tiersKey,
+              type: "multi_line_text_field",
+              value: tiersValue,
+            },
+          ];
+          if (writeLegacy) {
+            writes.push(
+              {
+                ownerId,
+                namespace: WHOLESALE_PRICE_NAMESPACE,
+                key: LEGACY_PRICE_KEY,
+                type: "number_decimal",
+                value: p.amount,
+              },
+              {
+                ownerId,
+                namespace: WHOLESALE_PRICE_NAMESPACE,
+                key: LEGACY_TIERS_KEY,
+                type: "multi_line_text_field",
+                value: tiersValue,
+              },
+            );
+          }
+          return writes;
+        }),
+      },
+    });
+    const setBody = await setRes.json();
+    const setErrors = setBody.data?.metafieldsSet?.userErrors;
+    if (setErrors?.length) {
+      return { updatedCount, error: setErrors.map((e: { message: string }) => e.message).join("; ") };
+    }
+    updatedCount += setBody.data?.metafieldsSet?.metafields?.length || 0;
+  }
+
+  return { updatedCount };
+}
+
+async function syncCustomerTags(
+  admin: Awaited<ReturnType<typeof getAdminForShop>>,
+  tag: string,
+  addCustomerIds: string[],
+  removeCustomerIds: string[],
+): Promise<{ failedCustomerIds: string[] }> {
+  const failedCustomerIds: string[] = [];
+
+  for (const customerId of addCustomerIds) {
+    const res = await admin.graphql(TAGS_ADD, { variables: { id: customerId, tags: [tag] } });
+    const body = await res.json();
+    const errors = body.data?.tagsAdd?.userErrors;
+    if (errors?.length) {
+      console.error("[priceListPush] failed to tag customer", customerId, errors);
+      failedCustomerIds.push(customerId);
+    }
+  }
+
+  for (const customerId of removeCustomerIds) {
+    const res = await admin.graphql(TAGS_REMOVE, { variables: { id: customerId, tags: [tag] } });
+    const body = await res.json();
+    const errors = body.data?.tagsRemove?.userErrors;
+    if (errors?.length) {
+      console.error("[priceListPush] failed to untag customer", customerId, errors);
+      failedCustomerIds.push(customerId);
+    }
+  }
+
+  return { failedCustomerIds };
+}
+
+export async function pushPriceListToShopify(
+  input: PushPriceListInput,
+): Promise<PushPriceListResult> {
+  if (input.prices.length === 0) {
+    return { error: "Price list has no priced products" };
+  }
+
+  const admin = await getAdminForShop(input.shop);
+
+  try {
+    const metafieldResult = await syncMetafields(admin, input);
+    if (metafieldResult.error) {
+      return { error: metafieldResult.error };
+    }
+
+    // Tags are pure group-membership identifiers now (matching SparkLayer's
+    // model: a fixed base tag + one group-specific tag) — no Shopify Segment
+    // or Automatic Discount is created here anymore. Actual wholesale price
+    // enforcement happens in apps.sparklayer.checkout.tsx, which looks up
+    // each line item's sparklayer.wholesale_price metafield directly instead
+    // of depending on a Shopify-side discount having already applied.
+    const tagResult = await syncCustomerTags(
+      admin,
+      input.tag,
+      input.addCustomerIds,
+      input.removeCustomerIds,
+    );
+
+    return {
+      success: true,
+      updatedCount: metafieldResult.updatedCount,
+      failedTagCustomerIds: tagResult.failedCustomerIds,
+    };
+  } catch (err) {
+    console.error("[priceListPush] failed to push price list to Shopify", err);
+    return { error: err instanceof Error ? err.message : "Unknown error pushing to Shopify" };
+  }
+}

@@ -1,0 +1,41 @@
+const { execSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const S = path.join(os.tmpdir(), "sparklayer-logic-tests") + "/";
+fs.mkdirSync(S, { recursive: true });
+const APP = path.join(__dirname, "..", "..");
+const out = S + "compiled_stock";
+fs.rmSync(out, { recursive: true, force: true });
+execSync(`npx tsc "${APP}/app/services/stockCheck.server.ts" --outDir "${out}" --module commonjs --target es2020 --skipLibCheck`, { cwd: APP, stdio: "pipe" });
+const m = require(path.join(out, "stockCheck.server.js"));
+let pass = 0, fail = 0;
+const ok = (n, c, extra) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : "  " + JSON.stringify(extra))); };
+
+const v = (n, q, policy = "DENY") => ({ id: "gid://shopify/ProductVariant/" + n, title: "Item " + n, sku: "S-" + n, inventoryQuantity: q, inventoryPolicy: policy });
+
+let r = m.checkStock([{ variantId: 1, quantity: 5 }], [v(1, 10)]);
+ok("enough stock: nothing to say", r.unavailable.length === 0 && r.backordered.length === 0, r);
+r = m.checkStock([{ variantId: 1, quantity: 10 }], [v(1, 10)]);
+ok("exactly enough is fine", r.unavailable.length === 0 && r.backordered.length === 0);
+r = m.checkStock([{ variantId: 1, quantity: 11 }], [v(1, 10)]);
+ok("one too many with no backorders -> unavailable, with the numbers", r.unavailable.length === 1 && r.unavailable[0].requested === 11 && r.unavailable[0].available === 10 && r.backordered.length === 0, r);
+r = m.checkStock([{ variantId: 1, quantity: 11 }], [v(1, 10, "CONTINUE")]);
+ok("one too many on an item that can be backordered -> backordered, not blocked", r.backordered.length === 1 && r.unavailable.length === 0, r);
+r = m.checkStock([{ variantId: 1, quantity: 1 }], [v(1, 0)]);
+ok("out of stock -> unavailable", r.unavailable.length === 1 && r.unavailable[0].available === 0, r);
+r = m.checkStock([{ variantId: 1, quantity: 1 }], [v(1, -4)]);
+ok("negative stock counts as none", r.unavailable[0].available === 0, r);
+r = m.checkStock([{ variantId: 1, quantity: 99 }], [v(1, null)]);
+ok("stock that is not tracked is never a problem", r.unavailable.length === 0 && r.backordered.length === 0, r);
+r = m.checkStock([{ variantId: 1, quantity: 99 }], []);
+ok("an item we know nothing about is left to Shopify", r.unavailable.length === 0 && r.backordered.length === 0);
+r = m.checkStock([{ variantId: 1, quantity: 6 }, { variantId: "1", quantity: 6 }], [v(1, 10)]);
+ok("the same item on two lines is added together (6 + 6 > 10)", r.unavailable.length === 1 && r.unavailable[0].requested === 12, r);
+r = m.checkStock([{ variantId: 1, quantity: 20 }, { variantId: 2, quantity: 20 }, { variantId: 3, quantity: 1 }], [v(1, 5), v(2, 5, "CONTINUE"), v(3, 9)]);
+ok("each item is judged on its own", r.unavailable.length === 1 && r.unavailable[0].sku === "S-1" && r.backordered.length === 1 && r.backordered[0].sku === "S-2", r);
+ok("the message reads plainly", m.describeIssues(r.unavailable) === "Item 1 (S-1): 20 wanted, 5 in stock", m.describeIssues(r.unavailable));
+
+console.log(`\n${pass} passed, ${fail} failed`);
+fs.rmSync(out, { recursive: true, force: true });
+process.exit(fail ? 1 : 0);

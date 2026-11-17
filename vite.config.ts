@@ -1,6 +1,9 @@
 import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig, type UserConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Related: https://github.com/remix-run/remix/issues/2835#issuecomment-1144102176
 // Replace the HOST env var with SHOPIFY_APP_URL so that it doesn't break the Vite server.
@@ -17,6 +20,19 @@ if (
 
 const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost")
   .hostname;
+
+// Shopify CLI assigns the local dev port dynamically and ignores this file's
+// own PORT setting, so it changes on every restart. Write the resolved port
+// out for backend-api to read fresh on every request, instead of relying on
+// a hardcoded ADMIN_FRONTEND_URL in backend-api/.env that goes stale.
+const resolvedPort = Number(process.env.PORT || 3000);
+try {
+  const dirname = path.dirname(fileURLToPath(import.meta.url));
+  const outFile = path.resolve(dirname, "../backend-api/.dev-admin-url.json");
+  fs.writeFileSync(outFile, JSON.stringify({ url: `http://localhost:${resolvedPort}` }));
+} catch {
+  // Best-effort only — backend-api falls back to ADMIN_FRONTEND_URL if this is missing.
+}
 
 let hmrConfig;
 if (host === "localhost") {

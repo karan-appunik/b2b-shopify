@@ -1,0 +1,37 @@
+const { execSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const S = path.join(os.tmpdir(), "sparklayer-logic-tests") + "/";
+fs.mkdirSync(S, { recursive: true });
+const APP = path.join(__dirname, "..", "..");
+const out = S + "compiled_price";
+fs.rmSync(out, { recursive: true, force: true });
+execSync(`npx tsc "${APP}/app/services/priceChange.server.ts" --outDir "${out}" --module commonjs --target es2020 --skipLibCheck`, { cwd: APP, stdio: "pipe" });
+const m = require(path.join(out, "priceChange.server.js"));
+let pass = 0, fail = 0;
+const ok = (n, c, extra) => { c ? pass++ : fail++; console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : "  " + JSON.stringify(extra))); };
+const act = (unit, title = "Item", sku = "S1") => ({ variantId: 1, title, sku, unit });
+
+let r = m.comparePrices([{ variantId: 1, quantity: 2, expectedUnit: 1000 }], [act(10)]);
+ok("same price: no change", r.changes.length === 0 && r.oldTotal === 20 && r.newTotal === 20, r);
+r = m.comparePrices([{ variantId: 1, quantity: 2, expectedUnit: 1000 }], [act(12.5)]);
+ok("price went up: reported with old and new unit", r.changes.length === 1 && r.changes[0].oldUnit === 10 && r.changes[0].newUnit === 12.5 && r.changes[0].quantity === 2, r);
+ok("totals are old and new", r.oldTotal === 20 && r.newTotal === 25, r);
+r = m.comparePrices([{ variantId: 1, quantity: 1, expectedUnit: 1000 }], [act(9.99)]);
+ok("a cent of rounding is not a change", r.changes.length === 0, r);
+r = m.comparePrices([{ variantId: 1, quantity: 1, expectedUnit: 1000 }], [act(9.98)]);
+ok("two cents is a change", r.changes.length === 1, r);
+r = m.comparePrices([{ variantId: 1, quantity: 1 }], [act(10)]);
+ok("no price seen by the agent: nothing to compare", r.changes.length === 0 && r.oldTotal === 0, r);
+r = m.comparePrices([{ variantId: 1, quantity: 1, expectedUnit: 1000 }], [act(null)]);
+ok("a price we can't work out is not a change", r.changes.length === 0, r);
+r = m.comparePrices([{ variantId: 1, quantity: 1, expectedUnit: 1000 }, { variantId: 2, quantity: 3, expectedUnit: 500 }], [act(10), act(4, "Other", null)]);
+ok("only the line that changed is listed", r.changes.length === 1 && r.changes[0].title === "Other" && r.oldTotal === 25 && r.newTotal === 22, r);
+ok("the message reads plainly", m.describeChanges(r, "USD") === "Other: USD 5.00 -> USD 4.00 each. Total was USD 25.00, now USD 22.00", m.describeChanges(r, "USD"));
+r = m.comparePrices([{ variantId: 1, quantity: 1, expectedUnit: "abc" }], [act(10)]);
+ok("junk in the expected price is ignored", r.changes.length === 0, r);
+
+console.log(`\n${pass} passed, ${fail} failed`);
+fs.rmSync(out, { recursive: true, force: true });
+process.exit(fail ? 1 : 0);

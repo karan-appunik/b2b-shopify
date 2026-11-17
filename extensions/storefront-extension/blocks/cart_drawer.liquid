@@ -1,0 +1,287 @@
+<div id="sparklayer-cart-drawer-root"
+     class=""
+     data-sparklayer-cart-drawer
+     data-proxy-url="/apps/sparklayer/variant-search"
+     data-address-proxy-url="/apps/sparklayer/customer-address"
+     data-checkout-proxy-url="/apps/sparklayer/checkout"
+     data-validate-coupon-proxy-url="/apps/sparklayer/validate-coupon"
+     data-coupon-availability-proxy-url="/apps/sparklayer/coupon-availability"
+     data-payment-terms-proxy-url="/apps/sparklayer/payment-terms"
+     data-credit-info-proxy-url="/apps/sparklayer/credit-info"
+     data-order-detail-proxy-url="/apps/sparklayer/order-detail"
+     data-orders-proxy-url="/apps/sparklayer/orders"
+     data-variant-pricing-proxy-url="/apps/sparklayer/variant-pricing"
+     data-agent-session-proxy-url="/apps/sparklayer/agent-session"
+     data-agent-addresses-proxy-url="/apps/sparklayer/agent-addresses"
+     data-agent-cart-proxy-url="/apps/sparklayer/agent-cart"
+     data-agent-context-proxy-url="/apps/sparklayer/agent-context"
+     data-agent-search-proxy-url="/apps/sparklayer/agent-search"
+     data-agent-dashboard-proxy-url="/apps/sparklayer/agent-dashboard"
+     data-agent-override-proxy-url="/apps/sparklayer/agent-override"
+     data-agent-approvals-proxy-url="/apps/sparklayer/agent-approvals"
+     data-agent-quote-proxy-url="/apps/sparklayer/agent-quotes"
+     data-agent-quote-approvals-proxy-url="/apps/sparklayer/agent-quote-approvals"
+     data-agent-payment-links-proxy-url="/apps/sparklayer/agent-payment-links"
+     data-agent-new-customer-proxy-url="/apps/sparklayer/agent-new-customer"
+     data-quick-order-proxy-url="/apps/sparklayer/quick-order"
+     data-shopping-lists-proxy-url="/apps/sparklayer/shopping-lists"
+     data-agent-notifications-proxy-url="/apps/sparklayer/agent-notifications"
+     data-reorder-proxy-url="/apps/sparklayer/reorder"
+     data-agent-summary-proxy-url="/apps/sparklayer/agent-summary"
+     data-agent-pins-proxy-url="/apps/sparklayer/agent-pins"
+     data-agent-delegations-proxy-url="/apps/sparklayer/agent-delegations"
+     data-agent-offline-proxy-url="/apps/sparklayer/agent-offline"
+     data-customer-quote-proxy-url="/apps/sparklayer/customer-quotes"
+     data-customer-id="{% if customer %}{{ customer.id }}{% endif %}"
+     data-has-customer="{% if customer %}true{% else %}false{% endif %}"
+     data-customer-email="{% if customer %}{{ customer.email }}{% endif %}"
+     data-customer-name="{% if customer %}{{ customer.name }}{% endif %}"
+     data-money-format="{{ shop.money_format }}"
+     data-i18n-title="{{ 'cartDrawer.title' | t }}"
+     data-i18n-my-account="{{ 'cartDrawer.myAccount' | t }}"
+     data-i18n-expand="{{ 'cartDrawer.expand' | t }}"
+     data-i18n-minimise="{{ 'cartDrawer.minimise' | t }}"
+     data-i18n-step1="{{ 'cartDrawer.step1' | t }}"
+     data-i18n-step2="{{ 'cartDrawer.step2' | t }}"
+     data-i18n-step3="{{ 'cartDrawer.step3' | t }}"
+     data-i18n-step4="{{ 'cartDrawer.step4' | t }}"
+     data-i18n-search-placeholder="{{ 'cartDrawer.searchPlaceholder' | t }}"
+     data-i18n-empty="{{ 'cartDrawer.empty' | t }}"
+     data-i18n-search-empty="{{ 'cartDrawer.searchEmpty' | t }}"
+     data-i18n-subtotal="{{ 'cartDrawer.subtotal' | t }}"
+     data-i18n-line="{{ 'cartDrawer.line' | t }}"
+     data-i18n-lines="{{ 'cartDrawer.lines' | t }}"
+     data-i18n-item="{{ 'cartDrawer.item' | t }}"
+     data-i18n-items="{{ 'cartDrawer.items' | t }}"
+     data-i18n-checkout="{{ 'cartDrawer.checkout' | t }}"
+     data-i18n-tax-note="{{ 'cartDrawer.taxNote' | t }}"
+     data-i18n-per-unit="{{ 'cartDrawer.perUnit' | t }}"
+     data-i18n-msrp="{{ 'cartDrawer.msrp' | t }}"
+     data-i18n-close="{{ 'cartDrawer.close' | t }}"
+     data-i18n-remove="{{ 'cartDrawer.remove' | t }}"
+     data-i18n-additional-info="{{ 'cartDrawer.additionalInfo' | t }}"
+     data-i18n-order-notes="{{ 'cartDrawer.orderNotes' | t }}"
+     data-i18n-shipping-address="{{ 'cartDrawer.shippingAddress' | t }}"
+     data-i18n-no-addresses="{{ 'cartDrawer.noAddresses' | t }}"
+     data-i18n-continue="{{ 'cartDrawer.continue' | t }}"
+     data-i18n-add-new-address="{{ 'cartDrawer.addNewAddress' | t }}"
+     data-i18n-edit-addresses-prefix="{{ 'cartDrawer.editAddressesPrefix' | t }}"
+     data-i18n-your-account="{{ 'cartDrawer.yourAccount' | t }}"
+     data-i18n-shipping-tax-note="{{ 'cartDrawer.shippingTaxNote' | t }}"
+     data-i18n-add-new-address-title="{{ 'cartDrawer.addNewAddressTitle' | t }}"
+     data-i18n-cancel="{{ 'cartDrawer.cancel' | t }}"
+     data-i18n-first-name="{{ 'cartDrawer.firstName' | t }}"
+     data-i18n-last-name="{{ 'cartDrawer.lastName' | t }}"
+     data-i18n-company="{{ 'cartDrawer.company' | t }}"
+     data-i18n-line1="{{ 'cartDrawer.line1' | t }}"
+     data-i18n-line2="{{ 'cartDrawer.line2' | t }}"
+     data-i18n-city="{{ 'cartDrawer.city' | t }}"
+     data-i18n-zip-code="{{ 'cartDrawer.zipCode' | t }}"
+     data-i18n-phone="{{ 'cartDrawer.phone' | t }}"
+     data-i18n-save-to-address-book="{{ 'cartDrawer.saveToAddressBook' | t }}"
+     data-i18n-continue-use-address="{{ 'cartDrawer.continueUseAddress' | t }}"
+     data-i18n-address-save-error="{{ 'cartDrawer.addressSaveError' | t }}"
+     data-i18n-checkout-error="{{ 'cartDrawer.checkoutError' | t }}"
+     data-i18n-shipping-method="{{ 'cartDrawer.shippingMethod' | t }}"
+     data-i18n-shipping-calculated-note="{{ 'cartDrawer.shippingCalculatedNote' | t }}"
+     data-i18n-payment-method="{{ 'cartDrawer.paymentMethod' | t }}"
+     data-i18n-pay-advance="{{ 'cartDrawer.payAdvance' | t }}"
+     data-i18n-pay-net30="{{ 'cartDrawer.payNet30' | t }}"
+     data-i18n-pay-now="{{ 'cartDrawer.payNow' | t }}"
+     data-i18n-pay-on-account="{{ 'cartDrawer.payOnAccount' | t }}"
+     data-i18n-charged-immediately="{{ 'cartDrawer.chargedImmediately' | t }}"
+     data-i18n-continue-to-checkout="{{ 'cartDrawer.continueToCheckout' | t }}"
+     data-i18n-order-complete-title="{{ 'cartDrawer.orderCompleteTitle' | t }}"
+     data-i18n-order-complete-message="{{ 'cartDrawer.orderCompleteMessage' | t }}"
+     data-i18n-view-order="{{ 'cartDrawer.viewOrder' | t }}"
+     data-i18n-order-status="{{ 'cartDrawer.orderStatus' | t }}"
+     data-i18n-order-payment-method="{{ 'cartDrawer.orderPaymentMethod' | t }}"
+     data-i18n-order-shipping-method="{{ 'cartDrawer.orderShippingMethod' | t }}"
+     data-i18n-order-shipping-address="{{ 'cartDrawer.orderShippingAddress' | t }}"
+     data-i18n-order-shipping="{{ 'cartDrawer.orderShipping' | t }}"
+     data-i18n-order-tax="{{ 'cartDrawer.orderTax' | t }}"
+     data-i18n-order-total="{{ 'cartDrawer.orderTotal' | t }}"
+     data-i18n-order-loading="{{ 'cartDrawer.orderLoading' | t }}"
+     data-i18n-my-account-title="{{ 'cartDrawer.myAccountTitle' | t }}"
+     data-i18n-recent-activity="{{ 'cartDrawer.recentActivity' | t }}"
+     data-i18n-view-all="{{ 'cartDrawer.viewAll' | t }}"
+     data-i18n-no-orders-yet="{{ 'cartDrawer.noOrdersYet' | t }}"
+     data-i18n-my-details="{{ 'cartDrawer.myDetails' | t }}"
+     data-i18n-email="{{ 'cartDrawer.email' | t }}"
+     data-i18n-credit-limit="{{ 'cartDrawer.creditLimit' | t }}"
+     data-i18n-available-credit="{{ 'cartDrawer.availableCredit' | t }}"
+     data-i18n-net-payment-terms="{{ 'cartDrawer.netPaymentTerms' | t }}"
+     data-i18n-not-set="{{ 'cartDrawer.notSet' | t }}"
+     data-i18n-payment-terms-note="{{ 'cartDrawer.paymentTermsNote' | t }}"
+     data-i18n-reports="{{ 'cartDrawer.reports' | t }}"
+     data-i18n-reports-name-column="{{ 'cartDrawer.reportsNameColumn' | t }}"
+     data-i18n-purchase-history-report="{{ 'cartDrawer.purchaseHistoryReport' | t }}"
+     data-i18n-address-book="{{ 'cartDrawer.addressBook' | t }}"
+     data-i18n-default-shipping-address="{{ 'cartDrawer.defaultShippingAddress' | t }}"
+     data-i18n-default-billing-address="{{ 'cartDrawer.defaultBillingAddress' | t }}"
+     data-i18n-orders-placed-in="{{ 'cartDrawer.ordersPlacedIn' | t }}"
+     data-i18n-set-as-default-address="{{ 'cartDrawer.setAsDefaultAddress' | t }}"
+     data-i18n-set-as-default-shipping="{{ 'cartDrawer.setAsDefaultShipping' | t }}"
+     data-i18n-set-as-default-billing="{{ 'cartDrawer.setAsDefaultBilling' | t }}"
+     data-i18n-save-address="{{ 'cartDrawer.saveAddress' | t }}"
+     data-i18n-activity-all="{{ 'cartDrawer.activityAll' | t }}"
+     data-i18n-activity-awaiting-merchant="{{ 'cartDrawer.activityAwaitingMerchant' | t }}"
+     data-i18n-activity-order="{{ 'cartDrawer.activityOrder' | t }}"
+     data-i18n-activity-reference="{{ 'cartDrawer.activityReference' | t }}"
+     data-i18n-activity-submitted-on="{{ 'cartDrawer.activitySubmittedOn' | t }}"
+     data-i18n-activity-amount="{{ 'cartDrawer.activityAmount' | t }}"
+     data-i18n-activity-status="{{ 'cartDrawer.activityStatus' | t }}"
+     {{ block.shopify_attributes }}>
+</div>
+
+{% if customer %}
+  <script type="application/json" id="sparklayer-customer-addresses">{{ customer.addresses | json }}</script>
+  <script type="application/json" id="sparklayer-customer-default-address-id">{{ customer.default_address.id | json }}</script>
+{% endif %}
+
+<script>
+  (function () {
+    function slCloseAnyDrawer(e) {
+      console.log('🔴 [SparkLayer Close] Triggered slCloseAnyDrawer', e);
+      if (e) {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      }
+
+      // 0. Impulse: close via the theme's own close button
+      var imp = document.getElementById('CartDrawer');
+      if (imp && imp.classList.contains('drawer') && imp.classList.contains('drawer--is-open')) {
+        var impBtn = imp.querySelector('.js-drawer-close, .drawer__close button, .drawer__close a');
+        if (impBtn) impBtn.click();
+        setTimeout(function () {
+          if (imp.classList.contains('drawer--is-open')) {
+            imp.classList.remove('drawer--is-open');
+            document.documentElement.classList.remove('js-drawer-open', 'lock-scroll');
+          }
+        }, 400);
+        document.dispatchEvent(new CustomEvent('sparklayer:drawer:closed'));
+        return;
+      }
+
+      // 0b. Warehouse: <form id="mini-cart"> is open while aria-hidden="false". Close it
+      // the way a shopper does, through the header's own cart toggle.
+      var wh = document.getElementById('mini-cart');
+      if (wh && wh.classList.contains('mini-cart') && wh.getAttribute('aria-hidden') !== 'true') {
+        var whToggles = document.querySelectorAll('[data-action="toggle-mini-cart"]');
+        for (var wt = 0; wt < whToggles.length; wt++) {
+          if (wh.contains(whToggles[wt]) || !whToggles[wt].getClientRects().length) continue;
+          whToggles[wt].click();
+          break;
+        }
+        // If the theme did not react to the click, shut it by hand.
+        setTimeout(function () {
+          if (wh.getAttribute('aria-hidden') !== 'true') {
+            wh.setAttribute('aria-hidden', 'true');
+            var expanded = document.querySelectorAll('[data-action="toggle-mini-cart"][aria-expanded="true"]');
+            for (var x = 0; x < expanded.length; x++) expanded[x].setAttribute('aria-expanded', 'false');
+          }
+        }, 400);
+        wh.classList.remove('is-expanded');
+        var whRoot = document.getElementById('sparklayer-cart-drawer-root');
+        if (whRoot) whRoot.classList.remove('is-open', 'is-expanded');
+        document.body.classList.remove('overflow-hidden', 'sl-drawer-active');
+        document.body.style.overflow = '';
+        document.dispatchEvent(new CustomEvent('sparklayer:drawer:closed'));
+        return;
+      }
+
+      // 1. Dawn custom element
+      var dawn = document.querySelector('cart-drawer');
+      console.log('🔴 [SparkLayer Close] Dawn element:', dawn);
+      if (dawn) {
+        if (typeof dawn.close === 'function') {
+          try {
+            dawn.close();
+            console.log('🔴 [SparkLayer Close] dawn.close() called successfully');
+          } catch (err) {
+            console.error('🔴 [SparkLayer Close] dawn.close() error:', err);
+          }
+        }
+        dawn.classList.remove('active', 'animate', 'is-open');
+        dawn.removeAttribute('open');
+        dawn.setAttribute('aria-hidden', 'true');
+      }
+
+      // 2. All theme drawer elements
+      var drawers = document.querySelectorAll(
+        'cart-drawer-component, theme-drawer, #CartDrawer, .cart-drawer, .drawer, #sidebar-cart, [data-cart-drawer], .drawer--cart, x-drawer[id*="cart"]'
+      );
+      console.log('🔴 [SparkLayer Close] Other drawers found:', drawers.length);
+      for (var i = 0; i < drawers.length; i++) {
+        var d = drawers[i];
+        if (typeof d.close === 'function') {
+          try { d.close(); } catch (err) {}
+        }
+        var dlg = d.querySelector && d.querySelector('dialog');
+        if (dlg && typeof dlg.close === 'function') {
+          try { dlg.close(); } catch (err) {}
+        }
+        d.classList.remove('active', 'animate', 'is-open');
+        d.removeAttribute('open');
+        d.setAttribute('aria-hidden', 'true');
+      }
+
+      // 3. Native overlay click
+      var overlay = document.getElementById('CartDrawer-Overlay') || document.querySelector('.cart-drawer__overlay');
+      if (overlay && typeof overlay.click === 'function') {
+        try {
+          console.log('🔴 [SparkLayer Close] Clicking overlay:', overlay);
+          overlay.click();
+        } catch (err) {}
+      }
+
+      // 4. SparkLayer Root
+      var root = document.getElementById('sparklayer-cart-drawer-root');
+      if (root) {
+        root.classList.remove('is-open', 'is-expanded');
+      }
+
+      // 5. Restore page body scrolling
+      document.body.classList.remove('overflow-hidden', 'sl-drawer-active');
+      document.body.style.overflow = '';
+      document.dispatchEvent(new CustomEvent('sparklayer:drawer:closed'));
+      console.log('🔴 [SparkLayer Close] Closed completely.');
+    }
+
+    window.__slCloseDrawer = slCloseAnyDrawer;
+
+    // Capture click on close buttons immediately
+    document.addEventListener(
+      'click',
+      function (e) {
+        var btn = e.target.closest && e.target.closest('[data-sl-close], .sl-cart-tabs-close');
+        if (btn) {
+          console.log('🔴 [SparkLayer Close] Click captured on close button element:', btn);
+          slCloseAnyDrawer(e);
+        }
+      },
+      true
+    );
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        console.log('🔴 [SparkLayer Close] Escape key detected');
+        slCloseAnyDrawer(e);
+      }
+    });
+  })();
+</script>
+
+<link rel="stylesheet" href="{{ 'cart-drawer.css' | asset_url }}?v={{ 'now' | date: '%s' }}">
+<link rel="stylesheet" href="{{ 'cart-drawer-native.css' | asset_url }}?v={{ 'now' | date: '%s' }}">
+<script src="{{ 'zxing.min.js' | asset_url }}" defer></script>
+<script src="{{ 'cart-drawer.js' | asset_url }}?v={{ 'now' | date: '%s' }}" defer></script>
+
+{% schema %}
+{
+  "name": "Appunik Cart Drawer",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}
